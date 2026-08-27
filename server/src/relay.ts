@@ -252,6 +252,21 @@ export class BlindRelay {
     return this.groups.get(id);
   }
 
+  removeGroupMember(id: string, member: string): GroupMetadata | undefined {
+    const group = this.groups.get(id);
+    if (!group) return undefined;
+    group.members = group.members.filter(
+      (m) => m.toLowerCase() !== member.toLowerCase()
+    );
+    this.addAuditLog({
+      id: randomUUID(),
+      timestamp: Date.now(),
+      type: 'GROUP_MEMBER_CHANGED',
+      details: `Group ${group.name} (${id}) membership changed (${group.members.length} members).`,
+    });
+    return group;
+  }
+
   routeGroupEnvelope(envelope: GroupEnvelope): { deliveredCount: number; queuedCount: number } {
     const group = this.groups.get(envelope.groupId);
     if (!group) {

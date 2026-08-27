@@ -133,6 +133,22 @@ app.get('/api/groups/user/:username', (req, res) => {
   return res.json({ groups });
 });
 
+// Remove a member from a group (only the creator may do this).
+app.delete('/api/groups/:id/members', (req, res) => {
+  const { id } = req.params;
+  const { member, requester } = req.body || {};
+  if (!member || !requester) {
+    return res.status(400).json({ error: 'member and requester are required' });
+  }
+  const group = relay.getGroup(id);
+  if (!group) return res.status(404).json({ error: 'Group not found' });
+  if (group.creator.toLowerCase() !== String(requester).toLowerCase()) {
+    return res.status(403).json({ error: 'Only the group creator can remove members' });
+  }
+  const updated = relay.removeGroupMember(id, member);
+  return res.json(updated);
+});
+
 // Get specific group info
 app.get('/api/groups/:id', (req, res) => {
   const { id } = req.params;

@@ -220,6 +220,23 @@ export class GroupSessionManager {
     return this.peerChains.has(peer.toLowerCase());
   }
 
+  /**
+   * Rotate our own sender key. Call this whenever a member leaves the group so
+   * the departed member's copy of the chain can no longer decrypt new messages.
+   * The fresh key must then be re-distributed to the remaining members.
+   */
+  rotateOurSenderKey(): void {
+    this.ourChainKey = randomBytes(32);
+    this.ourIteration = 0;
+    this.ourSigningKeyPair = ed25519.keygen();
+    this.saveToStorage();
+  }
+
+  /** Forget a peer's sender chain (they left the group). */
+  removePeer(peer: string): void {
+    if (this.peerChains.delete(peer.toLowerCase())) this.saveToStorage();
+  }
+
   private saveToStorage() {
     try {
       const state = {

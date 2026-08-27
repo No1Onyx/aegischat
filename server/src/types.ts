@@ -74,6 +74,7 @@ export interface ServerAuditLog {
     | 'STORE_ENCRYPTED_ATTACHMENT'
     | 'FETCH_ENCRYPTED_ATTACHMENT'
     | 'GROUP_CREATED'
+    | 'GROUP_MEMBER_CHANGED'
     | 'GROUP_MESSAGE_RELAYED';
   details: string;
   ciphertextSample?: string;

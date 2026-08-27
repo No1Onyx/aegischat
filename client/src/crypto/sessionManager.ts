@@ -64,14 +64,24 @@ export interface SealedEnvelope {
 
 /** Inner payload, readable only by the recipient. */
 interface SealedInner {
+  kind?: 'direct' | 'group'; // absent => 'direct'
   sender: string;
   senderIdentityKey: string;
   senderSigningKey: string;
+
+  // --- direct (X3DH + Double Ratchet) ---
   ephemeralKey?: string;
   oneTimeKeyIdUsed?: number;
-  ratchetKey: string;
-  messageNumber: number;
-  previousChainLength: number;
+  ratchetKey?: string;
+  messageNumber?: number;
+  previousChainLength?: number;
+
+  // --- group (Sender Keys) ---
+  groupId?: string;
+  groupMessageIndex?: number;
+  groupSignature?: string;   // sender-key Ed25519 signature over index+nonce+ciphertext
+
+  // --- shared ---
   nonce: string;
   ciphertext: string;
   timestamp: number;
@@ -372,6 +382,65 @@ export class SessionManager {
   /** Canonical bytes signed inside a sealed envelope (signature field blanked). */
   private sealedSigningBytes(inner: Omit<SealedInner, 'signature'>): Uint8Array {
     return new TextEncoder().encode(JSON.stringify({ ...inner, signature: '' }));
+  }
+
+  /**
+   * Signs `innerNoSig` with our identity key, seals it to `recipientIdentityPub`
+   * with an ephemeral DH, and pushes it to the relay addressed only by the
+   * recipient's blind delivery token.
+   */
+  private sealAndSend(
+    recipientIdentityPub: Uint8Array,
+    recipientSigningPub: Uint8Array,
+    innerNoSig: Omit<SealedInner, 'signature'>,
+    envelopeId: string,
+    ts: number
+  ) {
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+      throw new Error('WebSocket is not connected to relay');
+    }
+    const signature = toBase64(
+      sign(this.sealedSigningBytes(innerNoSig), this.signingKeyPair.privateKey)
+    );
+    const inner: SealedInner = { ...innerNoSig, signature };
+    const recipientBlindToken = blindDeliveryToken(recipientSigningPub);
+    const sealed = sealToRecipient(
+      recipientIdentityPub,
+      JSON.stringify(inner),
+      fromBase64(recipientBlindToken)
+    );
+    const sealedEnvelope: SealedEnvelope = {
+      id: envelopeId,
+      recipientBlindToken,
+      ephemeralPublicKey: toBase64(sealed.ephemeralPublicKey),
+      nonce: toBase64(sealed.nonce),
+      ciphertext: toBase64(sealed.ciphertext),
+      timestamp: ts,
+    };
+    this.ws.send(JSON.stringify({ type: 'SEALED_ENVELOPE', payload: sealedEnvelope }));
+  }
+
+  /** Fetch (and briefly cache) a peer's identity + signing public keys. */
+  private async peerKeys(
+    peer: string
+  ): Promise<{ identity: Uint8Array; signing: Uint8Array }> {
+    peer = peer.toLowerCase();
+    const session = this.sessions.get(peer);
+    if (session?.peerIdentityPublicKey && session.peerSigningPublicKey) {
+      return { identity: session.peerIdentityPublicKey, signing: session.peerSigningPublicKey };
+    }
+    const pin = this.pins.get(peer);
+    if (pin && pin.identityKey && pin.signingKey) {
+      return { identity: fromBase64(pin.identityKey), signing: fromBase64(pin.signingKey) };
+    }
+    const res = await fetch(`${this.serverUrl}/api/keys/${encodeURIComponent(peer)}`);
+    if (!res.ok) throw new Error(`Peer '${peer}' is not registered on key relay`);
+    const b = await res.json();
+    this.checkAndPinIdentity(peer, b.identityPublicKey, b.signingPublicKey);
+    return {
+      identity: fromBase64(b.identityPublicKey),
+      signing: fromBase64(b.signingPublicKey),
+    };
   }
 
   /** Directly set the verified flag on an existing pin (UI toggle). */
@@ -741,27 +810,13 @@ export class SessionManager {
       ciphertext: encryptedPayload.ciphertext,
       timestamp: ts,
     };
-    const signature = toBase64(
-      sign(this.sealedSigningBytes(innerNoSig), this.signingKeyPair.privateKey)
-    );
-    const inner: SealedInner = { ...innerNoSig, signature };
-
-    // Seal it to the recipient's identity key, addressed only by blind token.
-    const recipientBlindToken = blindDeliveryToken(peerSigning);
-    const sealed = sealToRecipient(
+    this.sealAndSend(
       sessionData.peerIdentityPublicKey,
-      JSON.stringify(inner),
-      fromBase64(recipientBlindToken)
+      peerSigning,
+      innerNoSig,
+      envelopeId,
+      ts
     );
-    const sealedEnvelope: SealedEnvelope = {
-      id: envelopeId,
-      recipientBlindToken,
-      ephemeralPublicKey: toBase64(sealed.ephemeralPublicKey),
-      nonce: toBase64(sealed.nonce),
-      ciphertext: toBase64(sealed.ciphertext),
-      timestamp: ts,
-    };
-    this.ws.send(JSON.stringify({ type: 'SEALED_ENVELOPE', payload: sealedEnvelope }));
 
     const summary = sessionData.session.getStateSummary();
     this.onRatchetUpdateCallback?.(recipient, summary);
@@ -777,7 +832,7 @@ export class SessionManager {
       expiresAt: expiresInSec > 0 ? now + expiresInSec * 1000 : undefined,
       isSelf: true,
       ratchetStep: summary.ratchetStep,
-      rawCiphertextPreview: sealedEnvelope.ciphertext.slice(0, 32) + '...',
+      rawCiphertextPreview: encryptedPayload.ciphertext.slice(0, 32) + '...',
     };
   }
 
@@ -830,6 +885,32 @@ export class SessionManager {
       this.checkAndPinIdentity(inner.sender, inner.senderIdentityKey, inner.senderSigningKey);
     } catch (err) {
       console.error('[Aegis] SECURITY:', (err as Error).message);
+      return;
+    }
+
+    if (inner.kind === 'group') {
+      this.handleIncomingGroupEnvelope(
+        {
+          id: sealed.id,
+          groupId: inner.groupId,
+          sender: inner.sender,
+          timestamp: inner.timestamp || sealed.timestamp,
+          messageIndex: inner.groupMessageIndex,
+          nonce: inner.nonce,
+          ciphertext: inner.ciphertext,
+          signature: inner.groupSignature,
+        },
+        true // replay already checked on the sealed envelope
+      );
+      return;
+    }
+
+    if (
+      typeof inner.ratchetKey !== 'string' ||
+      typeof inner.messageNumber !== 'number' ||
+      typeof inner.previousChainLength !== 'number'
+    ) {
+      console.error('[Aegis] Malformed direct sealed payload — dropped.');
       return;
     }
 
@@ -1017,15 +1098,17 @@ export class SessionManager {
     return sessionData.session.getStateSummary();
   }
 
-  private handleIncomingGroupEnvelope(envelope: any) {
+  private handleIncomingGroupEnvelope(envelope: any, skipReplayCheck = false) {
     try {
-      if (!this.timestampInWindow(envelope.timestamp)) {
-        console.warn('[Aegis] Dropped group envelope with out-of-window timestamp.');
-        return;
-      }
-      if (!this.markSeen(envelope.id)) {
-        console.warn('[Aegis] Dropped replayed group envelope', envelope.id);
-        return;
+      if (!skipReplayCheck) {
+        if (!this.timestampInWindow(envelope.timestamp)) {
+          console.warn('[Aegis] Dropped group envelope with out-of-window timestamp.');
+          return;
+        }
+        if (!this.markSeen(envelope.id)) {
+          console.warn('[Aegis] Dropped replayed group envelope', envelope.id);
+          return;
+        }
       }
       const groupSession = this.getOrCreateGroupSession(envelope.groupId);
       const plaintext = groupSession.decrypt(envelope.sender, {
@@ -1072,6 +1155,20 @@ export class SessionManager {
     }
   }
 
+  private groupMembersCache = new Map<string, { members: string[]; at: number }>();
+
+  /** Members of a group (cached ~30s). */
+  private async groupMemberList(groupId: string): Promise<string[]> {
+    const cached = this.groupMembersCache.get(groupId);
+    if (cached && Date.now() - cached.at < 30_000) return cached.members;
+    const res = await fetch(`${this.serverUrl}/api/groups/${encodeURIComponent(groupId)}`);
+    if (!res.ok) throw new Error(`Group ${groupId} not found on relay`);
+    const meta = await res.json();
+    const members: string[] = Array.isArray(meta.members) ? meta.members : [];
+    this.groupMembersCache.set(groupId, { members, at: Date.now() });
+    return members;
+  }
+
   async sendGroupMessage(
     groupId: string,
     text: string,
@@ -1080,30 +1177,40 @@ export class SessionManager {
   ): Promise<ChatMessage> {
     const groupSession = this.getOrCreateGroupSession(groupId);
 
-    // Prepare envelope payload
     const payloadText = (attachment || expiresInSec > 0)
       ? JSON.stringify({ _aegis: true, text, attachment, expiresInSec })
       : text;
 
+    // One O(1) sender-key encryption...
     const packet = groupSession.encrypt(payloadText);
     const envelopeId = 'grp_msg_' + crypto.randomUUID();
+    const ts = Date.now();
 
-    const groupEnvelope = {
-      id: envelopeId,
-      groupId,
-      sender: this.username,
-      timestamp: Date.now(),
-      messageIndex: packet.messageIndex,
-      nonce: packet.nonce,
-      ciphertext: packet.ciphertext,
-      signature: packet.signature,
-    };
-
-    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
-      throw new Error('WebSocket is not connected to relay');
+    // ...fanned out as individual SEALED envelopes so the relay learns neither
+    // the sender nor the group membership (privacy over the O(1) broadcast).
+    const members = await this.groupMemberList(groupId);
+    const meLower = this.username.toLowerCase();
+    for (const member of members) {
+      if (member.toLowerCase() === meLower) continue;
+      try {
+        const { identity, signing } = await this.peerKeys(member);
+        const innerNoSig: Omit<SealedInner, 'signature'> = {
+          kind: 'group',
+          sender: this.username,
+          senderIdentityKey: toBase64(this.identityKeyPair.publicKey),
+          senderSigningKey: toBase64(this.signingKeyPair.publicKey),
+          groupId,
+          groupMessageIndex: packet.messageIndex,
+          groupSignature: packet.signature,
+          nonce: packet.nonce,
+          ciphertext: packet.ciphertext,
+          timestamp: ts,
+        };
+        this.sealAndSend(identity, signing, innerNoSig, envelopeId + ':' + member.toLowerCase(), ts);
+      } catch (err) {
+        console.warn(`[Aegis] Could not deliver group message to ${member}:`, err);
+      }
     }
-
-    this.ws.send(JSON.stringify({ type: 'GROUP_ENVELOPE', payload: groupEnvelope }));
 
     const now = Date.now();
     return {
@@ -1113,12 +1220,43 @@ export class SessionManager {
       groupId,
       text,
       attachment,
-      timestamp: groupEnvelope.timestamp,
+      timestamp: ts,
       expiresAt: expiresInSec > 0 ? now + expiresInSec * 1000 : undefined,
       isSelf: true,
       ratchetStep: packet.messageIndex,
       rawCiphertextPreview: packet.ciphertext.slice(0, 32) + '...',
     };
+  }
+
+  /**
+   * Remove a member from a group: drop them server-side, forget their sender
+   * chain, rotate our own sender key, and re-distribute it to the members who
+   * remain. After this the removed member cannot read any further messages.
+   */
+  async removeGroupMember(
+    groupId: string,
+    memberToRemove: string,
+    remainingMembers: string[]
+  ): Promise<void> {
+    try {
+      await fetch(`${this.serverUrl}/api/groups/${encodeURIComponent(groupId)}/members`, {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ member: memberToRemove, requester: this.username }),
+      });
+    } catch (err) {
+      console.warn('[Aegis] Could not update group membership on relay:', err);
+    }
+    this.groupMembersCache.delete(groupId);
+
+    const gs = this.getOrCreateGroupSession(groupId);
+    gs.removePeer(memberToRemove);
+    gs.rotateOurSenderKey();
+
+    const staying = remainingMembers.filter(
+      (m) => m.toLowerCase() !== memberToRemove.toLowerCase()
+    );
+    await this.distributeSenderKeyToGroup(groupId, staying);
   }
 
   async distributeSenderKeyToGroup(groupId: string, members: string[]): Promise<void> {
