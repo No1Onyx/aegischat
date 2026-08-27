@@ -63,7 +63,8 @@ import { MeshModal } from './components/MeshModal';
 import { DevicePairingModal } from './components/DevicePairingModal';
 import type { GroupMetadata } from '../../server/src/types';
 
-const SERVER_URL = 'http://localhost:4000';
+import { RELAY_URL } from './config';
+const SERVER_URL = RELAY_URL;
 
 // Global cache of SessionManagers so switching profiles in demo retains state
 const sessionManagersCache = new Map<string, SessionManager>();

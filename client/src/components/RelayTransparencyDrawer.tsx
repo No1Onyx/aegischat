@@ -1,3 +1,4 @@
+import { RELAY_URL } from '../config';
 import { useEffect, useState } from 'react';
 import { Server, Activity, ShieldAlert, Database } from 'lucide-react';
 
@@ -16,7 +17,7 @@ interface RelayTransparencyDrawerProps {
 
 export const RelayTransparencyDrawer: React.FC<RelayTransparencyDrawerProps> = ({
   onClose,
-  serverUrl = 'http://localhost:4000',
+  serverUrl = RELAY_URL,
 }) => {
   const [logs, setLogs] = useState<AuditLog[]>([]);
 

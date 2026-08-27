@@ -1,3 +1,5 @@
+import { RELAY_URL } from '../config.js';
+
 export type TransportMode = 'direct' | 'tor_socks5' | 'domain_fronting' | 'obfuscated';
 
 export interface TransportConfig {
@@ -94,7 +96,7 @@ export class TransportManager {
    * Diagnostic probe: connectivity, latency, and whether the active mode is
    * actually enforceable from this runtime.
    */
-  static async runDiagnosticProbe(baseServerUrl: string = 'http://localhost:4000'): Promise<{
+  static async runDiagnosticProbe(baseServerUrl: string = RELAY_URL): Promise<{
     reachable: boolean;
     latencyMs: number;
     mode: TransportMode;

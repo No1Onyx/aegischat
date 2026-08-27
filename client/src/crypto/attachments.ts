@@ -1,5 +1,6 @@
 import { chacha20poly1305 } from '@noble/ciphers/chacha.js';
 import { toBase64, fromBase64 } from './primitives.js';
+import { RELAY_URL } from '../config.js';
 
 export interface EncryptedAttachmentDescriptor {
   attachmentId: string;
@@ -29,7 +30,7 @@ export class AttachmentCrypto {
     fileName: string = 'attachment.bin',
     isVoiceNote: boolean = false,
     durationSec?: number,
-    serverUrl: string = 'http://localhost:4000'
+    serverUrl: string = RELAY_URL
   ): Promise<EncryptedAttachmentDescriptor> {
     const arrayBuffer = await fileOrBlob.arrayBuffer();
     const rawBytes = new Uint8Array(arrayBuffer);
@@ -79,7 +80,7 @@ export class AttachmentCrypto {
    */
   static async fetchAndDecrypt(
     descriptor: EncryptedAttachmentDescriptor,
-    serverUrl: string = 'http://localhost:4000'
+    serverUrl: string = RELAY_URL
   ): Promise<string> {
     if (decryptedBlobCache.has(descriptor.attachmentId)) {
       return decryptedBlobCache.get(descriptor.attachmentId)!;

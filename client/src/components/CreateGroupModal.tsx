@@ -9,7 +9,8 @@ interface CreateGroupModalProps {
   onGroupCreated: (group: GroupMetadata) => void;
 }
 
-const SERVER_URL = 'http://localhost:4000';
+import { RELAY_URL } from '../config';
+const SERVER_URL = RELAY_URL;
 
 export function CreateGroupModal({
   currentUser,

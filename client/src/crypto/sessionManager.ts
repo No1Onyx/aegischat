@@ -35,6 +35,7 @@ import type { EncryptedAttachmentDescriptor } from './attachments.js';
 import { GroupSessionManager } from './senderKeys.js';
 import type { CallSignal } from './webrtcManager.js';
 import { TransportManager } from './transport.js';
+import { RELAY_URL } from '../config.js';
 
 export interface WireEnvelope {
   id: string;
@@ -227,7 +228,7 @@ export class SessionManager {
 
   constructor(
     username: string,
-    serverUrl: string = 'http://localhost:4000',
+    serverUrl: string = RELAY_URL,
     identityMnemonic?: string
   ) {
     this.username = username;

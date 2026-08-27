@@ -7,7 +7,7 @@ import { KeyDirectory } from './keyDirectory.js';
 import { BlindRelay } from './relay.js';
 
 const app = express();
-const port = 4000;
+const port = Number(process.env.PORT || process.env.AEGIS_PORT || 4000);
 
 // Restrict cross-origin access to the local dev client / packaged app shells.
 // Override with AEGIS_ALLOWED_ORIGINS (comma-separated) for other deployments.
