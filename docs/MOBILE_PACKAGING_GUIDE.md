@@ -1,6 +1,6 @@
 # 📱 AegisChat Mobile Packaging & Cross-Platform Deployment Guide
 
-AegisChat is architected from the ground up to be a **unified cross-platform zero-knowledge application** across **PC (Windows / macOS / Linux)**, **Android**, and **iOS**.
+AegisChat is architected from the ground up to be a **unified cross-platform end-to-end-encrypted application** across **PC (Windows / macOS / Linux)**, **Android**, and **iOS**.
 
 ---
 
@@ -32,10 +32,17 @@ AegisChat is architected from the ground up to be a **unified cross-platform zer
                         └─────────────────────────────────────┘
 ```
 
-The cryptographic core is written in pure, native **Rust** (`core-crypto/`). Because it compiles to native machine code (`aarch64` ARM assembly), it guarantees:
-1. **Zero Garbage Collection Leakage**: Cryptographic secrets are wiped from RAM using `ZeroizeOnDrop` immediately after encryption.
-2. **Hardware-Accelerated Speed**: Constant-time ChaCha20-Poly1305 and Curve25519 scalar multiplications execute directly on the mobile CPU with NEON SIMD instructions.
-3. **Censorship Immunity**: The application binary operates self-contained without mandatory Google Play Services or Apple iCloud dependencies.
+> **Important:** `core-crypto/` (Rust) is **reference code and is not yet wired
+> into the running app** — the shipping client uses the TypeScript
+> implementation in `client/src/crypto/`. The properties below describe what the
+> Rust core is designed for once it is on the live path; today they do **not**
+> apply to the mobile builds produced by this guide. See
+> [`THREAT_MODEL.md`](THREAT_MODEL.md).
+
+Intended, once wired in:
+1. **RAM scrubbing** of secrets via `ZeroizeOnDrop` (the web/TS layer cannot do this reliably).
+2. Constant-time ChaCha20-Poly1305 / Curve25519 from the RustCrypto crates, compiled natively.
+3. No mandatory Google Play Services or Apple iCloud dependency for the app to function (sideload-friendly), which reduces — but does not by itself provide — censorship resistance.
 
 ---
 

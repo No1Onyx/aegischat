@@ -1564,7 +1564,7 @@ export function App() {
                   placeholder={
                     activeTab === 'groups'
                       ? `Send encrypted message to ${activeGroup?.name || 'group'}...`
-                      : `Send uncrackable message to ${activeContact}...`
+                      : `Send encrypted message to ${activeContact}...`
                   }
                   className={`w-full ${theme.inputBg} border ${theme.border} rounded-xl px-4 py-3 text-sm text-slate-200 placeholder-slate-500 focus:outline-none focus:border-sky-500 transition-all shadow-inner`}
                 />

@@ -1,0 +1,30 @@
+# Replace relay.example.org and the email, then `docker compose up`.
+# Caddy fetches and renews a Let's Encrypt certificate automatically.
+
+relay.example.org {
+	encode zstd gzip
+
+	# WebSocket + HTTP API both live under the same origin.
+	reverse_proxy relay:4000
+
+	# The relay is untrusted for content/metadata, but TLS still protects
+	# transport integrity and availability. Basic hardening headers:
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "no-referrer"
+		-Server
+	}
+
+	# Optional: drop request bodies larger than an attachment upload.
+	request_body {
+		max_size 30MB
+	}
+}
+
+# global options
+{
+	email you@example.org
+	# Uncomment for the staging CA while testing so you don't hit rate limits:
+	# acme_ca https://acme-staging-v02.api.letsencrypt.org/directory
+}

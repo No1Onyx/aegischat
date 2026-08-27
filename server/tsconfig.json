@@ -6,7 +6,10 @@
     "esModuleInterop": true,
     "strict": true,
     "skipLibCheck": true,
+    "rootDir": "./src",
     "outDir": "./dist"
   },
-  "include": ["src/**/*"]
+  "include": ["src/**/*"],
+  "//": "test-*.ts import from ../../client and are run via tsx, never built.",
+  "exclude": ["src/test-*.ts"]
 }

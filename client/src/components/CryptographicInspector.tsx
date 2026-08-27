@@ -114,7 +114,7 @@ export const CryptographicInspector: React.FC<CryptographicInspectorProps> = ({
           <div className="bg-slate-800/40 rounded-xl p-4 text-xs text-slate-400 space-y-1.5 border border-slate-700/50">
             <div className="flex items-center gap-1.5 text-slate-300 font-semibold">
               <Info className="w-4 h-4 text-sky-400" />
-              <span>Why is this uncrackable?</span>
+              <span>How does the encryption work?</span>
             </div>
             <p className="leading-relaxed">
               Every message is encrypted with an ephemeral one-time key derived via HKDF. Even if an attacker steals your device tomorrow, past messages remain permanently indecipherable (<strong>Forward Secrecy</strong>).

@@ -7,8 +7,8 @@ import {
   toBase64,
   fromBase64,
   toHex,
-} from './primitives';
-import type { DHKeyPair } from './primitives';
+} from './primitives.js';
+import type { DHKeyPair } from './primitives.js';
 
 export interface LinkedDevice {
   id: string;

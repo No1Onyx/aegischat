@@ -117,7 +117,7 @@ export function OnboardingModal({ onComplete }: OnboardingModalProps) {
               </span>
             </h2>
             <p className="text-xs text-slate-400">
-              No Phone · No Email · Mathematical Freedom of Speech
+              No phone number · No email · End-to-end encrypted
             </p>
           </div>
         </div>

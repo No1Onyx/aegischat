@@ -19,7 +19,7 @@
     "test:rust": "cargo test --manifest-path ./core-crypto/Cargo.toml",
     "test:unit": "npm run test:rust && npm run test:crypto && npm run test:security",
     "test:live": "npm run test:e2e && npm run test:groups && npm run test:calling && npm run test:mesh && npm run test:attachments && npm run test:pairing && npm run test:censorship",
-    "typecheck": "npm --prefix client exec tsc -- -b --noEmit && npm --prefix server exec tsc -- --noEmit",
+    "typecheck": "npm --prefix client run typecheck && npm --prefix server run typecheck",
     "build:rust": "cargo build --release --manifest-path ./core-crypto/Cargo.toml",
     "desktop:dev": "npm --prefix client run tauri dev",
     "desktop:build": "npm --prefix client run tauri build",

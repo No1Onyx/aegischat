@@ -1,119 +1,120 @@
-# AegisChat - Zero-Knowledge End-to-End Encrypted Messaging Platform
-## Designed for Absolute Privacy, Anti-Forensics & Freedom of Speech
+# AegisChat
 
-AegisChat is an uncrackable, cryptographically hardened messaging system built on the **Signal Protocol specification** (Extended Triple Diffie-Hellman + Double Ratchet Algorithm), a **Zero-Knowledge Blind Relay Server**, and a **Memory-Safe Rust Engine with Anti-Forensics Database Protection**.
+An end-to-end encrypted messenger built on the Signal protocol family (X3DH +
+Double Ratchet), a metadata-minimising **untrusted relay**, and a memory-safe
+Rust crypto core. Targets: Windows / macOS / Linux desktop, Android, iOS, and
+the web.
 
-Target Platforms: **Windows, macOS, Linux (PC), iOS, Android**.
-
----
-
-## 🛡️ The 5 Unbreakable Security Pillars
-
-Unlike standard cloud chats where servers hold decryption keys, phone numbers link identities, and unencrypted databases sit on devices, AegisChat enforces strict mathematical and architectural guarantees:
-
-1. **Zero-Anchor Identity (No Phone, No Email, No SMS)**:
-   * Identity is derived deterministically from a **12-word BIP-39 mnemonic seed phrase**.
-   * Eliminates telecom SIM-swapping, SS7 network interception, and government carrier subpoenas.
-   * Derives Ed25519 signing keys and X25519 Diffie-Hellman keys on the device.
-
-2. **Sealed Sender (Metadata & Traffic Analysis Stripping)**:
-   * The sender's identity is encrypted *inside* the payload and signed with Ed25519.
-   * The outer envelope visible to the relay server contains only an ephemeral **Blind Delivery Token**.
-   * **The server cannot see who sent the message**, preventing social communication graph tracking.
-
-3. **Memory-Hard Encrypted Storage at Rest (Argon2id + ChaCha20-Poly1305)**:
-   * Local database files are encrypted with keys derived via **Argon2id (RFC 9106)** with 64 MB memory cost.
-   * Immune to GPU/ASIC brute-force password cracking clusters.
-   * **Panic Button / Duress Passphrase**: Entering a configured duress phrase triggers an **instant cryptographic shred** (overwriting the database on disk with cryptographic noise before deleting it).
-   * **Self-Destructing Messages**: Disappearing messages with expiration timestamps are automatically scrubbed upon load.
-
-4. **Signal Double Ratchet + RAM Zeroization (`ZeroizeOnDrop`)**:
-   * **Forward Secrecy**: Every single message derives a brand-new symmetric key.
-   * **Break-in Recovery**: Every turn alternation generates a new ephemeral Diffie-Hellman keypair, rotating the root key.
-   * All private keys and intermediate secrets are automatically overwritten with zeros in RAM on drop.
-
-5. **Untrusted Zero-Knowledge Blind Relay**:
-   * The backend operates strictly as an untrusted router. It never handles private keys, never stores message history, and purges envelopes from ephemeral RAM the microsecond receipt is acknowledged.
+> **Status: pre-audit.** This is not a finished product and has **not** been
+> independently reviewed. Do not use it as the only protection for
+> communications where disclosure could get someone hurt. Read
+> [`docs/THREAT_MODEL.md`](docs/THREAT_MODEL.md) and
+> [`SECURITY.md`](SECURITY.md) first.
 
 ---
 
-## 📁 Monorepo Structure
+## What it actually does today
+
+| Property | How |
+|---|---|
+| **Confidential 1:1 messages** | X3DH session setup → Double Ratchet. ChaCha20-Poly1305 AEAD. Keys never leave the client. |
+| **Forward secrecy + post-compromise security** | Per-message symmetric ratchet; per-turn DH ratchet rotating the root key. |
+| **Group messages** | Signal-style Sender Keys (Ed25519-signed), re-keyed when a member is removed. |
+| **The relay doesn't see who talks to whom** | Sealed sender: the outer envelope carries only a blind delivery token; group messages fan out as per-recipient sealed envelopes. |
+| **Identity you can verify** | 12-word BIP-39 seed → deterministic identity keys (restore on any device). Trust-on-first-use pinning; the app requires an out-of-band 60-digit safety-number check before the first message and hard-fails if a contact's key later changes. |
+| **Encrypted at rest** | Every key/seed/session/message blob in local storage is ChaCha20-Poly1305-encrypted under an Argon2id-derived key (64 MiB, t=3, p=4) that lives only in RAM and is dropped on lock. |
+| **Duress phrase** | A decoy passphrase (stored only as a hash) triggers an emergency shred. |
+| **Replay / DoS resistance** | Per-session seen-id set + signed-timestamp window; `MAX_SKIP` bounds on ratchet catch-up; all server collections bounded. |
+
+## What it does **not** do (yet)
+
+- Group **creation** still tells the relay the member list (message routing is blind; setup isn't).
+- Tor / SOCKS5 / domain-fronting are not enforceable from a web page — they need Tor Browser, a system proxy, or the native build. A relay-URL override and a fronting header are provided.
+- Traffic-analysis resistance is limited to 256-byte size bucketing. Timing/volume/online-status are visible to the relay.
+- WebRTC calls leak your IP to STUN (and, without a TURN server, to the peer). `relay-only` mode exists but needs your own TURN server.
+- The native disk-wipe and RAM-zeroization in `core-crypto/` are **not wired into the app**. The Rust core is reference code with locked interop vectors; the shipping client uses its own TypeScript crypto.
+- Multi-device sync, message-history backup, RAM hygiene in the web build.
+
+Full detail: [`docs/THREAT_MODEL.md`](docs/THREAT_MODEL.md) ·
+[`docs/SECURITY_REVIEW_CHECKLIST.md`](docs/SECURITY_REVIEW_CHECKLIST.md)
+
+---
+
+## Layout
 
 ```
-D:\newapp
-├── core-crypto/                # Memory-Safe Rust Cryptographic Core
-│   ├── src/
-│   │   ├── identity.rs         # BIP-39 Zero-Anchor identity vault
-│   │   ├── aead.rs             # ChaCha20-Poly1305 authenticated encryption
-│   │   ├── kdf.rs              # HKDF-SHA256 key derivation
-│   │   ├── double_ratchet.rs   # Pure Rust Double Ratchet algorithm
-│   │   ├── sealed_sender.rs    # Metadata-stripping Sealed Sender protocol
-│   │   ├── safety_number.rs    # 60-digit MITM fingerprint generator
-│   │   ├── storage.rs          # Argon2id encrypted database & duress wipe
-│   │   └── ffi.rs              # C-FFI exports for iOS, Android, and PC
-│   ├── aegis_core_crypto.h     # C header for native cross-platform linking
-│   └── Cargo.toml
-├── client/                     # Telegram-Styled Client & Tauri v2 Shell
-│   ├── src/                    # React + TypeScript + Tailwind UI
-│   │   ├── crypto/             # Client-side cryptographic session manager
-│   │   ├── components/         # Live crypto inspector, safety numbers, logs
-│   │   └── App.tsx             # Interactive messaging interface
-│   └── src-tauri/              # Native Tauri v2 Desktop/Mobile Rust Shell
-│       ├── src/lib.rs          # Native desktop/mobile bridge to core-crypto
-│       └── tauri.conf.json     # Windows, Android, and iOS window configuration
-├── server/                     # Zero-Knowledge Blind Relay Server
-│   ├── src/
-│   │   ├── keyDirectory.ts     # Public prekey bundle storage
-│   │   ├── relay.ts            # Ephemeral message router & audit logger
-│   │   └── index.ts            # Express & WebSocket server (port 4000)
-└── package.json                # Monorepo orchestration scripts
+core-crypto/   Rust crypto engine (reference + FFI + interop vectors; not on the live path)
+  src/identity.rs        BIP-39 → identity keys
+  src/double_ratchet.rs  Double Ratchet
+  src/sealed_sender.rs   sealed-sender primitives
+  src/storage.rs         Argon2id encrypted database + duress wipe
+  fuzz/                   cargo-fuzz targets
+  tests/adversarial.rs   malformed-input regression tests
+
+client/        React + TypeScript app; Tauri v2 shell for desktop/mobile
+  src/crypto/           the crypto actually used at runtime
+    primitives.ts         AEAD, HKDF, seed→identity, sealed-sender, blind token
+    x3dh.ts / doubleRatchet.ts / senderKeys.ts
+    sessionManager.ts     sessions, pinning, replay defence, sealed transport
+    vault.ts / secureStore.ts   passphrase KDF + encryption at rest
+    webrtcManager.ts      E2EE calls
+  src/App.tsx           UI
+
+server/        Untrusted blind relay + prekey directory (Node/Express/ws)
+  src/relay.ts           sealed + legacy routing, bounded queues
+  src/keyDirectory.ts    public prekey bundles
+  src/test-*.ts          integration test harnesses
 ```
 
 ---
 
-## 🧪 Comprehensive Verification Commands
+## Run it
 
-### 1. Test the Rust Cryptographic & Storage Engine (7 Tests)
-Verifies BIP-39 mnemonic recovery, Double Ratchet rotation, Sealed Sender, Argon2id encrypted database, tamper detection, and duress emergency wipe:
+Requires Node 20+ and a stable Rust toolchain. Copy `.env.example` to `.env`
+first (defaults are fine for local dev).
+
 ```bash
-npm run test:rust
+npm install && npm --prefix client install && npm --prefix server install
+
+npm run dev            # relay on :4000, web client on :5173
 ```
 
-### 2. Test the Web Cryptographic Suite (8 Tests)
-Verifies client-side X3DH, ChaCha20-Poly1305 AEAD, Double Ratchet, and Safety Numbers:
+- Web client: <http://localhost:5173>
+- Two identities in one browser: `?user=Alice` and `?user=Bob` in separate tabs.
+
+Native desktop:
+
 ```bash
-npm run test:crypto
+npm run desktop:dev            # dev window
+npm run desktop:build          # installer
 ```
 
-### 3. Test Live End-to-End Relay Over WebSockets (9 Tests)
-Launches simulated independent clients over live network WebSockets, transmits real encrypted envelopes, and verifies zero-knowledge audit logs:
-```bash
-npm run test:e2e
-```
+Mobile: see [`docs/MOBILE_PACKAGING_GUIDE.md`](docs/MOBILE_PACKAGING_GUIDE.md).
+Deployment (TLS, relay hosting): [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md).
 
 ---
 
-## 🚀 How to Run the Application
+## Test
 
-### Option A: Web Browser Mode
-Start the Blind Relay Server and the Web Client simultaneously:
 ```bash
-npm run dev
-```
-* **Client App**: [http://localhost:5173](http://localhost:5173)
-* **Relay Server**: `http://localhost:4000` (WebSocket at `ws://localhost:4000/ws`)
-
-### Option B: Native Desktop Application (Windows PC)
-Run the native desktop shell linking directly to the Rust core:
-```bash
-npm run desktop:dev
+npm run typecheck        # client + server tsc
+npm run test:unit        # cargo test + crypto vectors + security regressions
+npm run test:live        # integration suites (starts nothing — run `npm run dev:server` first,
+                         #   or let CI start the relay)
+cargo test --manifest-path core-crypto/Cargo.toml --test adversarial
 ```
 
-To compile a standalone, optimized Windows installer/executable (`.exe`):
-```bash
-npm run desktop:build
-```
+CI (`.github/workflows/ci.yml`) runs all of the above plus `npm audit` /
+`cargo audit`. A nightly workflow runs the `cargo-fuzz` targets.
 
-### Option C: Mobile Builds (Android / iOS)
-* **Android**: `npm run mobile:android` (requires Android Studio / NDK)
-* **iOS**: `npm run mobile:ios` (requires macOS with Xcode)
+---
+
+## Contributing / reviewing
+
+Security reports: **private**, see [`SECURITY.md`](SECURITY.md). If you want to
+review the cryptography, [`docs/SECURITY_REVIEW_CHECKLIST.md`](docs/SECURITY_REVIEW_CHECKLIST.md)
+is the map.
+
+## License
+
+Apache-2.0.
