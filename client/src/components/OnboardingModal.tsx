@@ -45,9 +45,12 @@ export function OnboardingModal({ onComplete }: OnboardingModalProps) {
     setHasBackedUp(false);
   };
 
-  const handleFinishOnboarding = (e: React.FormEvent) => {
+  const [isBusy, setIsBusy] = useState<boolean>(false);
+
+  const handleFinishOnboarding = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
+    if (isBusy) return;
 
     if (!username.trim()) {
       setError('Please choose a username/handle.');
@@ -76,14 +79,20 @@ export function OnboardingModal({ onComplete }: OnboardingModalProps) {
       return;
     }
 
-    VaultSecurityManager.initializeVault(
-      username.trim(),
-      finalMnemonic,
-      password,
-      duressCode.trim()
-    );
-
-    onComplete(username.trim());
+    setIsBusy(true);
+    try {
+      await VaultSecurityManager.initializeVault(
+        username.trim(),
+        finalMnemonic,
+        password,
+        duressCode.trim()
+      );
+      onComplete(username.trim());
+    } catch (err) {
+      setError('Could not create the vault: ' + (err as Error).message);
+    } finally {
+      setIsBusy(false);
+    }
   };
 
   const words = mnemonic.split(' ');
@@ -350,9 +359,10 @@ export function OnboardingModal({ onComplete }: OnboardingModalProps) {
 
               <button
                 type="submit"
-                className="px-6 py-2.5 rounded-xl bg-sky-600 hover:bg-sky-500 text-white font-semibold text-xs shadow-lg shadow-sky-900/50 transition-all hover:scale-105"
+                disabled={isBusy}
+                className="px-6 py-2.5 rounded-xl bg-sky-600 hover:bg-sky-500 disabled:opacity-50 text-white font-semibold text-xs shadow-lg shadow-sky-900/50 transition-all hover:scale-105"
               >
-                Complete Setup & Launch
+                {isBusy ? 'Deriving vault key (Argon2id)…' : 'Complete Setup & Launch'}
               </button>
             </div>
           </form>

@@ -31,11 +31,11 @@ export function SecuritySettingsModal({ onClose, onEmergencyShred }: SecuritySet
   const [duressCode, setDuressCode] = useState<string>('');
   const [saveSuccess, setSaveSuccess] = useState<boolean>(false);
 
-  const handleRevealSeed = (e: React.FormEvent) => {
+  const handleRevealSeed = async (e: React.FormEvent) => {
     e.preventDefault();
     setSeedError('');
 
-    const res = VaultSecurityManager.verifyPassword(seedAuthPassword);
+    const res = await VaultSecurityManager.verifyPassword(seedAuthPassword);
     if (res.success) {
       setIsSeedRevealed(true);
       setSeedAuthPassword('');
@@ -44,12 +44,12 @@ export function SecuritySettingsModal({ onClose, onEmergencyShred }: SecuritySet
     }
   };
 
-  const handleSaveSettings = () => {
+  const handleSaveSettings = async () => {
     if (!config) return;
     config.autoLockMinutes = autoLockMinutes;
     VaultSecurityManager.saveConfig(config);
     if (duressCode.trim()) {
-      VaultSecurityManager.setDuressPhrase(duressCode.trim());
+      await VaultSecurityManager.setDuressPhrase(duressCode.trim());
       setDuressCode('');
     }
     setSaveSuccess(true);

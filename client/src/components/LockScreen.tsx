@@ -12,28 +12,35 @@ export function LockScreen({ username, onUnlock, onDuressShred }: LockScreenProp
   const [password, setPassword] = useState<string>('');
   const [error, setError] = useState<string>('');
   const [isShredding, setIsShredding] = useState<boolean>(false);
+  const [isUnlocking, setIsUnlocking] = useState<boolean>(false);
 
-  const handleUnlock = (e: React.FormEvent) => {
+  const handleUnlock = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
+    if (isUnlocking) return;
+    setIsUnlocking(true);
 
-    const result = VaultSecurityManager.verifyPassword(password);
+    try {
+      const result = await VaultSecurityManager.verifyPassword(password);
 
-    if (result.isDuress) {
-      // DURESS TRIGGERED: Instant Emergency Cryptographic Shred!
-      setIsShredding(true);
-      setTimeout(() => {
-        VaultSecurityManager.emergencyShred();
-        onDuressShred();
-      }, 600);
-      return;
-    }
+      if (result.isDuress) {
+        // DURESS TRIGGERED: Instant Emergency Cryptographic Shred!
+        setIsShredding(true);
+        setTimeout(() => {
+          VaultSecurityManager.emergencyShred();
+          onDuressShred();
+        }, 600);
+        return;
+      }
 
-    if (result.success) {
-      onUnlock();
-    } else {
-      setError('Incorrect Passphrase.');
-      setPassword('');
+      if (result.success) {
+        onUnlock();
+      } else {
+        setError('Incorrect Passphrase.');
+        setPassword('');
+      }
+    } finally {
+      setIsUnlocking(false);
     }
   };
 
@@ -85,14 +92,14 @@ export function LockScreen({ username, onUnlock, onDuressShred }: LockScreenProp
 
             <button
               type="submit"
-              disabled={!password}
+              disabled={!password || isUnlocking}
               className={`w-full py-3 rounded-xl font-semibold text-xs flex items-center justify-center gap-2 transition-all ${
-                password
+                password && !isUnlocking
                   ? 'bg-sky-600 hover:bg-sky-500 text-white shadow-lg shadow-sky-950 hover:scale-[1.02]'
                   : 'bg-slate-800 text-slate-500 cursor-not-allowed'
               }`}
             >
-              <span>Unlock Vault</span>
+              <span>{isUnlocking ? 'Deriving key (Argon2id)…' : 'Unlock Vault'}</span>
               <ArrowRight className="w-4 h-4" />
             </button>
           </form>

@@ -1,7 +1,7 @@
 import { generateMnemonic, validateMnemonic } from '@scure/bip39';
 import { wordlist } from '@scure/bip39/wordlists/english.js';
 import { sha256 } from '@noble/hashes/sha2.js';
-import { argon2id } from '@noble/hashes/argon2.js';
+import { argon2idAsync } from '@noble/hashes/argon2.js';
 import { secureStore } from './secureStore.js';
 
 export interface SecurityConfig {
@@ -81,13 +81,17 @@ export class VaultSecurityManager {
     return validateMnemonic(phrase.trim(), wordlist);
   }
 
-  /** Raw memory-hard KDF output. Salt MUST be unique per vault. */
-  private static deriveRaw(password: string, salt: Uint8Array): Uint8Array {
-    return argon2id(new TextEncoder().encode(password), salt, ARGON2_PARAMS);
+  /** Raw memory-hard KDF output. Salt MUST be unique per vault. Runs off the
+   *  main thread (yields periodically) so the UI stays responsive. */
+  private static deriveRaw(password: string, salt: Uint8Array): Promise<Uint8Array> {
+    return argon2idAsync(new TextEncoder().encode(password), salt, {
+      ...ARGON2_PARAMS,
+      asyncTick: 20,
+    });
   }
 
-  static hashPassword(password: string, salt: Uint8Array): string {
-    return bytesToHex(this.deriveRaw(password, salt));
+  static async hashPassword(password: string, salt: Uint8Array): Promise<string> {
+    return bytesToHex(await this.deriveRaw(password, salt));
   }
 
   /** Legacy record format kept only so existing local vaults can be upgraded. */
@@ -112,14 +116,14 @@ export class VaultSecurityManager {
     }
   }
 
-  static initializeVault(
+  static async initializeVault(
     username: string,
     mnemonic: string,
     masterPassword: string,
     duressCode: string = ''
-  ): SecurityConfig {
+  ): Promise<SecurityConfig> {
     const salt = crypto.getRandomValues(new Uint8Array(16));
-    const raw = this.deriveRaw(masterPassword, salt);
+    const raw = await this.deriveRaw(masterPassword, salt);
     const config: SecurityConfig = {
       hasInitialized: true,
       username: username.trim(),
@@ -127,7 +131,7 @@ export class VaultSecurityManager {
       masterPasswordSalt: toBase64(salt),
       kdf: 'argon2id',
       duressHash: duressCode.trim()
-        ? this.hashPassword(duressCode.trim(), salt)
+        ? await this.hashPassword(duressCode.trim(), salt)
         : undefined,
       autoLockMinutes: 10,
       disappearingTimerSec: 0,
@@ -142,7 +146,7 @@ export class VaultSecurityManager {
     return config;
   }
 
-  static verifyPassword(password: string): { success: boolean; isDuress: boolean } {
+  static async verifyPassword(password: string): Promise<{ success: boolean; isDuress: boolean }> {
     const config = this.getConfig();
     // Fail CLOSED: an unreadable / missing config must never grant access.
     if (!config || !config.hasInitialized) {
@@ -151,7 +155,7 @@ export class VaultSecurityManager {
 
     // Duress check (constant-time), before the real check.
     if (config.duressHash && config.masterPasswordSalt) {
-      const h = this.hashPassword(password, fromBase64(config.masterPasswordSalt));
+      const h = await this.hashPassword(password, fromBase64(config.masterPasswordSalt));
       if (constantTimeEquals(h, config.duressHash)) return { success: false, isDuress: true };
     } else if (config.duressCode && constantTimeEquals(password.trim(), config.duressCode)) {
       return { success: false, isDuress: true };
@@ -162,19 +166,19 @@ export class VaultSecurityManager {
     let saltB64 = config.masterPasswordSalt;
 
     if (config.masterPasswordSalt) {
-      raw = this.deriveRaw(password, fromBase64(config.masterPasswordSalt));
+      raw = await this.deriveRaw(password, fromBase64(config.masterPasswordSalt));
       ok = constantTimeEquals(bytesToHex(raw), config.masterPasswordHash);
     } else {
       // Legacy vault: verify old scheme, then upgrade to Argon2id.
       ok = constantTimeEquals(this.legacyHash(password), config.masterPasswordHash);
       if (ok) {
         const salt = crypto.getRandomValues(new Uint8Array(16));
-        raw = this.deriveRaw(password, salt);
+        raw = await this.deriveRaw(password, salt);
         saltB64 = toBase64(salt);
         config.masterPasswordHash = bytesToHex(raw);
         config.masterPasswordSalt = saltB64;
         config.kdf = 'argon2id';
-        if (config.duressCode) config.duressHash = this.hashPassword(config.duressCode, salt);
+        if (config.duressCode) config.duressHash = await this.hashPassword(config.duressCode, salt);
         this.saveConfig(config);
       }
     }
@@ -183,13 +187,13 @@ export class VaultSecurityManager {
 
     // Unlock encrypted-at-rest storage.
     secureStore.unlockWithMaster(raw, saltB64);
-    this.migratePlainSecrets(config);
+    await this.migratePlainSecrets(config);
     this.touchActivity();
     return { success: true, isDuress: false };
   }
 
   /** Move any plaintext secrets still in the config into the encrypted store. */
-  private static migratePlainSecrets(config: SecurityConfig): void {
+  private static async migratePlainSecrets(config: SecurityConfig): Promise<void> {
     let changed = false;
     if (config.mnemonic) {
       if (!secureStore.getItem(SECURE_VAULT_KEY)) {
@@ -203,7 +207,7 @@ export class VaultSecurityManager {
     }
     if (config.duressCode) {
       if (!config.duressHash && config.masterPasswordSalt) {
-        config.duressHash = this.hashPassword(config.duressCode, fromBase64(config.masterPasswordSalt));
+        config.duressHash = await this.hashPassword(config.duressCode, fromBase64(config.masterPasswordSalt));
       }
       delete config.duressCode;
       changed = true;
@@ -212,12 +216,12 @@ export class VaultSecurityManager {
   }
 
   /** Set or clear the duress phrase (stored only as an Argon2id hash). */
-  static setDuressPhrase(phrase: string): void {
+  static async setDuressPhrase(phrase: string): Promise<void> {
     const config = this.getConfig();
     if (!config || !config.masterPasswordSalt) return;
     const p = phrase.trim();
     config.duressHash = p
-      ? this.hashPassword(p, fromBase64(config.masterPasswordSalt))
+      ? await this.hashPassword(p, fromBase64(config.masterPasswordSalt))
       : undefined;
     delete config.duressCode;
     this.saveConfig(config);
