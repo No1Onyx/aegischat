@@ -1,0 +1,44 @@
+{
+  "name": "aegischat",
+  "version": "1.0.0",
+  "description": "Zero-Knowledge End-to-End Encrypted Messaging Platform with Signal Double Ratchet & X3DH",
+  "main": "server/dist/index.js",
+  "scripts": {
+    "dev": "concurrently -n \"RELAY,CLIENT\" -c \"bgBlue.bold,bgCyan.bold\" \"npm --prefix server run dev\" \"npm --prefix client run dev\"",
+    "dev:server": "npm --prefix server run dev",
+    "dev:client": "npm --prefix client run dev",
+    "test:crypto": "npx --prefix server tsx ./client/src/crypto/verify.ts",
+    "test:attachments": "npx --prefix server tsx ./server/src/test-attachments.ts",
+    "test:groups": "npx --prefix server tsx ./server/src/test-groups.ts",
+    "test:censorship": "npx --prefix server tsx ./server/src/test-censorship.ts",
+    "test:calling": "npx --prefix server tsx ./server/src/test-calling.ts",
+    "test:mesh": "npx --prefix server tsx ./server/src/test-mesh.ts",
+    "test:pairing": "npx --prefix server tsx ./server/src/test-device-pairing.ts",
+    "test:e2e": "npx --prefix server tsx ./server/src/test-live-e2e.ts",
+    "test:rust": "cargo test --manifest-path ./core-crypto/Cargo.toml",
+    "build:rust": "cargo build --release --manifest-path ./core-crypto/Cargo.toml",
+    "desktop:dev": "npm --prefix client run tauri dev",
+    "desktop:build": "npm --prefix client run tauri build",
+    "mobile:android": "npm --prefix client run tauri android dev",
+    "mobile:android:init": "npm --prefix client run tauri android init",
+    "mobile:android:build": "npm --prefix client run tauri android build --apk",
+    "mobile:ios": "npm --prefix client run tauri ios dev",
+    "mobile:ios:init": "npm --prefix client run tauri ios init",
+    "mobile:ios:build": "npm --prefix client run tauri ios build",
+    "build": "npm --prefix server run build && npm --prefix client run build && npm run build:rust"
+  },
+  "keywords": [
+    "e2ee",
+    "signal-protocol",
+    "double-ratchet",
+    "x3dh",
+    "chacha20poly1305",
+    "zero-knowledge",
+    "secure-messaging"
+  ],
+  "author": "",
+  "license": "Apache-2.0",
+  "dependencies": {
+    "concurrently": "^9.1.2"
+  }
+}

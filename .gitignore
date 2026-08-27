@@ -1,0 +1,32 @@
+# Dependencies
+node_modules/
+**/node_modules/
+
+# Builds / bundles
+dist/
+build/
+client/dist/
+server/dist/
+**/*.tsbuildinfo
+
+# Rust
+target/
+**/target/
+
+# Tauri generated
+client/src-tauri/gen/
+
+# Encrypted vault / test databases
+*.aegis
+test_*.aegis
+
+# Editor / OS
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.log
+
+# Env
+.env
+.env.local
