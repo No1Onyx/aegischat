@@ -213,59 +213,9 @@ export class BlindRelay {
     });
   }
 
-  createGroup(id: string, name: string, creator: string, members: string[]): GroupMetadata {
-    if (this.groups.size >= MAX_GROUPS && !this.groups.has(id)) {
-      throw new Error('Relay group capacity reached');
-    }
-    const uniqueMembers = Array.from(new Set([creator, ...members]));
-    const metadata: GroupMetadata = {
-      id,
-      name,
-      creator,
-      members: uniqueMembers,
-      createdAt: Date.now(),
-    };
-    this.groups.set(id, metadata);
-
-    this.addAuditLog({
-      id: randomUUID(),
-      timestamp: Date.now(),
-      type: 'GROUP_CREATED',
-      details: `Group "${name}" (${id}) created by ${creator} with ${uniqueMembers.length} members.`,
-    });
-
-    return metadata;
-  }
-
-  getGroupsForUser(username: string): GroupMetadata[] {
-    const key = username.toLowerCase();
-    const userGroups: GroupMetadata[] = [];
-    for (const group of this.groups.values()) {
-      if (group.members.some((m) => m.toLowerCase() === key)) {
-        userGroups.push(group);
-      }
-    }
-    return userGroups;
-  }
-
-  getGroup(id: string): GroupMetadata | undefined {
-    return this.groups.get(id);
-  }
-
-  removeGroupMember(id: string, member: string): GroupMetadata | undefined {
-    const group = this.groups.get(id);
-    if (!group) return undefined;
-    group.members = group.members.filter(
-      (m) => m.toLowerCase() !== member.toLowerCase()
-    );
-    this.addAuditLog({
-      id: randomUUID(),
-      timestamp: Date.now(),
-      type: 'GROUP_MEMBER_CHANGED',
-      details: `Group ${group.name} (${id}) membership changed (${group.members.length} members).`,
-    });
-    return group;
-  }
+  // Groups are client-side only now — the relay has no group registry. The
+  // GROUP_ENVELOPE path below is retained but inert (this.groups is never
+  // populated); group messages ride SEALED_ENVELOPE like everything else.
 
   routeGroupEnvelope(envelope: GroupEnvelope): { deliveredCount: number; queuedCount: number } {
     const group = this.groups.get(envelope.groupId);

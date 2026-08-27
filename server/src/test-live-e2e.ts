@@ -153,16 +153,21 @@ async function runFullSystemTest() {
   if (!fpMatch) throw new Error('Safety numbers mismatch!');
   console.log(`✅ [9/10] Cryptographic Safety Number 100% match verified (MITM Impossible)\n`);
 
-  // 10. Sealed group message over the live relay (per-recipient sealed fan-out).
-  console.log('--- TEST 10: SEALED GROUP MESSAGE OVER WIRE ---');
-  const grpRes = await fetch(`${SERVER_URL}/api/groups/create`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ name: 'E2E Cell', creator: 'TestAlice', members: ['TestAlice', 'TestBob'] }),
-  });
-  const grp = await grpRes.json();
-  await aliceSM.distributeSenderKeyToGroup(grp.id, grp.members);
-  await sleep(800);
+  // 10. Blind group: created client-side, invite + message travel sealed.
+  console.log('--- TEST 10: BLIND CLIENT-SIDE GROUP OVER WIRE ---');
+  // Snapshot the audit log so we only inspect entries from this test (the relay
+  // in CI/dev is long-lived and accumulates entries across runs).
+  const auditBefore: number =
+    (await (await fetch(`${SERVER_URL}/api/audit`)).json()).logs.length;
+  let bobSawGroup = '';
+  bobSM.setOnGroupUpdate((gs) => { if (gs[0]) bobSawGroup = gs[0].id; });
+  const grp = await aliceSM.createGroup('E2E Cell', ['TestAlice', 'TestBob']);
+  await sleep(1200); // invite delivery
+  if (bobSawGroup !== grp.id) throw new Error('Bob did not receive the sealed group invite');
+  if (bobSM.getGroups().length !== 1 || bobSM.getGroups()[0].name !== 'E2E Cell') {
+    throw new Error('Bob did not store the group definition');
+  }
+
   const grpText = 'Group broadcast: assemble at the usual place, sealed from the relay.';
   const beforeCount = bobReceivedMsgs.length;
   await aliceSM.sendGroupMessage(grp.id, grpText);
@@ -171,22 +176,21 @@ async function runFullSystemTest() {
   if (!grpMsg || grpMsg.text !== grpText) {
     throw new Error('Bob did not receive the sealed group message');
   }
+
   const auditRes2 = await fetch(`${SERVER_URL}/api/audit`);
-  const { logs: logs2 } = await auditRes2.json();
-  // Group *creation* over REST still tells the relay the roster (known limit);
-  // but the sealed message *routing* must reveal nothing.
-  const plaintextLeak = logs2.some((l: any) => JSON.stringify(l).includes('assemble'));
-  const routingLeak = logs2
-    .filter((l: any) => l.type === 'ENVELOPE_RELAYED')
-    .some((l: any) => {
-      const s = JSON.stringify(l);
-      return s.includes(grp.id) || s.includes('TestAlice') || s.includes('TestBob');
-    });
-  if (plaintextLeak) throw new Error('Relay audit leaked group plaintext');
-  if (routingLeak) throw new Error('Relay leaked group id / sender while routing a sealed group message');
-  console.log(`[Bob] Received sealed group message: "${grpMsg.text}"`);
-  console.log(`[Audit] Sealed routing entries carried no group id and no sender.`);
-  console.log(`✅ [10/10] Sealed group message verified — relay learns neither sender nor membership\n`);
+  const { logs: allLogs } = await auditRes2.json();
+  const logs2 = allLogs.slice(auditBefore); // only this test's entries
+  const leak = logs2.some((l: any) => {
+    const s = JSON.stringify(l);
+    return s.includes(grp.id) || s.includes('E2E Cell') || s.includes('assemble')
+      || s.includes('TestAlice') || s.includes('TestBob');
+  });
+  if (leak) {
+    throw new Error('Relay audit leaked group id / name / sender / plaintext for a blind group');
+  }
+  console.log(`[Bob] Joined "${bobSM.getGroups()[0].name}" via sealed invite; received: "${grpMsg.text}"`);
+  console.log(`[Audit] Relay has no record of the group id, name, members, or sender.`);
+  console.log(`✅ [10/10] Blind group verified — the relay never learns the group exists\n`);
 
   // Clean up WebSockets
   aliceSM.disconnect();

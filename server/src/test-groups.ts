@@ -107,21 +107,22 @@ async function runGroupTests() {
   console.log('🔒 VERIFYING SIGNAL SENDER KEYS SECRET GROUP PROTOCOL');
   console.log('🚀 =========================================================\n');
 
-  // 1. Group Creation on Server
-  console.log('--- TEST 1: GROUP CREATION & ZERO-KNOWLEDGE METADATA ---');
-  const groupRes = await fetch(`${SERVER_URL}/api/groups/create`, {
+  // 1. Groups are client-side: the relay is never told a group exists.
+  console.log('--- TEST 1: CLIENT-SIDE GROUP (RELAY HAS NO GROUP REGISTRY) ---');
+  const group = {
+    id: 'grp_' + (globalThis.crypto?.randomUUID?.() ?? Math.random().toString(36).slice(2)),
+    name: 'Freedom Resistance Alpha',
+    creator: 'Alice',
+    members: ['Alice', 'Bob', 'Charlie'],
+  };
+  // The old POST /api/groups/create endpoint has been removed on purpose.
+  const gone = await fetch(`${SERVER_URL}/api/groups/create`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      name: 'Freedom Resistance Alpha',
-      creator: 'Alice',
-      members: ['Alice', 'Bob', 'Charlie'],
-    }),
-  });
-
-  if (!groupRes.ok) throw new Error('Failed to create group');
-  const group = await groupRes.json();
-  console.log(`✅ [1/5] Group created: "${group.name}" (ID: ${group.id}) with 3 members\n`);
+    body: JSON.stringify({ name: group.name, creator: group.creator, members: group.members }),
+  }).then((r) => r.status).catch(() => 0);
+  if (gone === 200) throw new Error('Relay still exposes a group-creation endpoint');
+  console.log(`✅ [1/5] Group "${group.name}" (${group.id}) exists only on the client; relay returned ${gone} for /api/groups/create\n`);
 
   // 2. Alice generates Sender Key & distributes to Bob & Charlie
   console.log('--- TEST 2: SENDER KEY GENERATION & DISTRIBUTION ---');

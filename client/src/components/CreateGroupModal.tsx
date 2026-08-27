@@ -6,17 +6,14 @@ interface CreateGroupModalProps {
   currentUser: string;
   availableContacts: string[];
   onClose: () => void;
-  onGroupCreated: (group: GroupMetadata) => void;
+  onCreateGroup: (name: string, members: string[]) => Promise<GroupMetadata>;
 }
-
-import { RELAY_URL } from '../config';
-const SERVER_URL = RELAY_URL;
 
 export function CreateGroupModal({
   currentUser,
   availableContacts,
   onClose,
-  onGroupCreated,
+  onCreateGroup,
 }: CreateGroupModalProps) {
   const [groupName, setGroupName] = useState<string>('');
   const [selectedMembers, setSelectedMembers] = useState<Set<string>>(new Set());
@@ -55,23 +52,7 @@ export function CreateGroupModal({
     setError('');
 
     try {
-      const members = Array.from(selectedMembers);
-      const res = await fetch(`${SERVER_URL}/api/groups/create`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          name: groupName.trim(),
-          creator: currentUser,
-          members,
-        }),
-      });
-
-      if (!res.ok) {
-        throw new Error(`Failed to create group: ${res.statusText}`);
-      }
-
-      const groupData: GroupMetadata = await res.json();
-      onGroupCreated(groupData);
+      await onCreateGroup(groupName.trim(), Array.from(selectedMembers));
       onClose();
     } catch (err) {
       console.error('Group creation error:', err);

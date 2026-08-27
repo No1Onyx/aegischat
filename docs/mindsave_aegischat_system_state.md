@@ -61,25 +61,22 @@ regressions), `npm run test:live` (7 integration suites),
 
 ## 3. Known gaps (see THREAT_MODEL §5 for the full list)
 
-1. **Group creation** registers the roster with the relay over REST. Message
-   routing is blind; setup is not. Blind group setup is designed, not built.
-2. **Traffic analysis**: only 256-byte size bucketing. Timing / volume /
+1. **Traffic analysis**: only 256-byte size bucketing. Timing / volume /
    online-status visible to the relay. No decoy traffic.
-3. **Tor/SOCKS5/domain-fronting**: not enforceable from a web page.
-4. **WebRTC**: IP visible to STUN and (no TURN) to the peer.
-5. **Native disk wipe / RAM zeroization** (`core-crypto/`) not wired into the app.
-6. **Multi-device sync** and message-history backup: not implemented.
-7. **Key directory**: no account auth (A4 mitigated by pinning + verification,
+2. **Tor / SOCKS5 / domain-fronting**: not enforceable from a web page.
+3. **WebRTC**: IP visible to STUN and (no TURN) to the peer.
+4. **Native disk wipe / RAM zeroization** (`core-crypto/`) not wired into the app.
+5. **Multi-device sync** and message-history backup: not implemented.
+6. **Key directory**: no account auth (A4 mitigated by pinning + verification,
    not prevented). `/api/audit`, `/api/users` unauthenticated.
-8. **No independent audit.**
+7. **No independent audit.**
 
 ---
 
 ## 4. Roadmap
 
 1. Manual browser QA of the full onboarding → lock → chat → group flow.
-2. Blind group setup (remove the relay's view of rosters).
-3. Wire the Rust core (identity, ratchet, storage, disk wipe) onto the live path,
+2. Wire the Rust core (identity, ratchet, storage, disk wipe) onto the live path,
    or formally deprecate it.
-4. Deployment hardening: rate limiting, log scrubbing, reproducible client build.
-5. Independent security review → community bug bounty.
+3. Deployment hardening: rate limiting, log scrubbing, reproducible client build.
+4. Independent security review → community bug bounty.

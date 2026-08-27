@@ -119,6 +119,19 @@ export type PeerTrustState =
   | 'verified'             // key pinned and confirmed
   | 'changed';             // pinned key no longer matches the directory — DANGER
 
+/**
+ * A group as this client knows it. Groups are entirely client-side: there is no
+ * server-side group registration, so the relay never learns the roster. The
+ * definition and the sender key travel to each member as a sealed 1:1 invite.
+ */
+export interface LocalGroup {
+  id: string;
+  name: string;
+  creator: string;
+  members: string[];
+  createdAt: number;
+}
+
 export class SessionManager {
   public username: string;
   public identityKeyPair!: DHKeyPair;
@@ -214,9 +227,44 @@ export class SessionManager {
   private onRatchetUpdateCallback?: (peer: string, summary: RatchetStateSummary) => void;
   private onConnectionChangeCallback?: (connected: boolean) => void;
   private onCallSignalCallback?: (peer: string, signal: CallSignal) => void;
+  private onGroupUpdateCallback?: (groups: LocalGroup[]) => void;
+
+  // Client-side group registry (never sent to the relay).
+  private groups = new Map<string, LocalGroup>();
 
   public setOnCallSignal(cb: (peer: string, signal: CallSignal) => void) {
     this.onCallSignalCallback = cb;
+  }
+
+  public setOnGroupUpdate(cb: (groups: LocalGroup[]) => void) {
+    this.onGroupUpdateCallback = cb;
+  }
+
+  private groupsKey() {
+    return `aegis_groups_${this.username.toLowerCase()}`;
+  }
+
+  private loadGroups() {
+    try {
+      const raw = secureStore.getItem(this.groupsKey());
+      if (!raw) return;
+      for (const g of JSON.parse(raw) as LocalGroup[]) this.groups.set(g.id, g);
+    } catch (err) {
+      console.warn('Failed to load groups:', err);
+    }
+  }
+
+  private persistGroups() {
+    secureStore.setItem(this.groupsKey(), JSON.stringify([...this.groups.values()]));
+    this.onGroupUpdateCallback?.(this.getGroups());
+  }
+
+  getGroups(): LocalGroup[] {
+    return [...this.groups.values()];
+  }
+
+  getGroup(id: string): LocalGroup | undefined {
+    return this.groups.get(id);
   }
 
   async sendCallSignal(peer: string, signal: CallSignal): Promise<void> {
@@ -246,6 +294,7 @@ export class SessionManager {
     this.loadSessions();
     this.loadPins();
     this.loadSeen();
+    this.loadGroups();
   }
 
   // --- Trust / pinning -----------------------------------------------------
@@ -1014,18 +1063,30 @@ export class SessionManager {
     let expiresAt: number | undefined = undefined;
 
     try {
-      if (plaintext.startsWith('{"_aegisGroupDistribution":true,')) {
+      if (plaintext.startsWith('{"_aegisGroupInvite":true,')) {
         const parsed = JSON.parse(plaintext);
-        if (parsed.distribution) {
-          const groupSession = this.getOrCreateGroupSession(parsed.distribution.groupId);
-          groupSession.importPeerDistribution(parsed.distribution);
-          console.log(`[Aegis] Imported sender key from ${envelope.sender} for group ${parsed.distribution.groupId}`);
-
-          // Acknowledge receipt to server
+        const g = parsed.group as LocalGroup | undefined;
+        const dist = parsed.distribution;
+        if (g && g.id && dist) {
+          // Store / update the group definition locally. Trust the definition
+          // only from a peer whose sealed-sender signature already verified
+          // (this path is only reached after that check) — and, for updates,
+          // only from the same creator.
+          const existing = this.groups.get(g.id);
+          if (!existing || existing.creator.toLowerCase() === envelope.sender.toLowerCase()) {
+            this.groups.set(g.id, {
+              id: g.id,
+              name: g.name || existing?.name || 'Group',
+              creator: g.creator || envelope.sender,
+              members: Array.isArray(g.members) ? g.members : existing?.members ?? [],
+              createdAt: existing?.createdAt ?? g.createdAt ?? Date.now(),
+            });
+            this.persistGroups();
+          }
+          this.getOrCreateGroupSession(dist.groupId).importPeerDistribution(dist);
+          console.log(`[Aegis] Joined/updated group ${g.id} via invite from ${envelope.sender}`);
           this.ws?.send(JSON.stringify({
-            type: 'ACK',
-            envelopeId: envelope.id,
-            blindToken: this.myBlindToken(),
+            type: 'ACK', envelopeId: envelope.id, blindToken: this.myBlindToken(),
           }));
           return;
         }
@@ -1156,18 +1217,42 @@ export class SessionManager {
     }
   }
 
-  private groupMembersCache = new Map<string, { members: string[]; at: number }>();
+  /**
+   * Create a group entirely client-side. The relay is never told the group
+   * exists or who is in it. The definition + our sender key are delivered to
+   * each member as a sealed 1:1 invite.
+   */
+  async createGroup(name: string, members: string[]): Promise<LocalGroup> {
+    const me = this.username;
+    const roster = Array.from(new Set([me, ...members].map((m) => m)));
+    const group: LocalGroup = {
+      id: 'grp_' + crypto.randomUUID(),
+      name: name.trim() || 'Group',
+      creator: me,
+      members: roster,
+      createdAt: Date.now(),
+    };
+    this.groups.set(group.id, group);
+    this.persistGroups();
+    // Fresh sender key for this group.
+    this.getOrCreateGroupSession(group.id);
+    await this.sendGroupInvites(group, roster);
+    return group;
+  }
 
-  /** Members of a group (cached ~30s). */
-  private async groupMemberList(groupId: string): Promise<string[]> {
-    const cached = this.groupMembersCache.get(groupId);
-    if (cached && Date.now() - cached.at < 30_000) return cached.members;
-    const res = await fetch(`${this.serverUrl}/api/groups/${encodeURIComponent(groupId)}`);
-    if (!res.ok) throw new Error(`Group ${groupId} not found on relay`);
-    const meta = await res.json();
-    const members: string[] = Array.isArray(meta.members) ? meta.members : [];
-    this.groupMembersCache.set(groupId, { members, at: Date.now() });
-    return members;
+  /** Send `{ _aegisGroupInvite }` (definition + our current sender key) to members. */
+  private async sendGroupInvites(group: LocalGroup, to: string[]): Promise<void> {
+    const gs = this.getOrCreateGroupSession(group.id);
+    const distribution = gs.exportOurDistribution();
+    const payload = JSON.stringify({ _aegisGroupInvite: true, group, distribution });
+    for (const member of to) {
+      if (member.toLowerCase() === this.username.toLowerCase()) continue;
+      try {
+        await this.sendMessage(member, payload, 0);
+      } catch (err) {
+        console.warn(`[Aegis] Could not invite ${member} to ${group.name}:`, err);
+      }
+    }
   }
 
   async sendGroupMessage(
@@ -1176,6 +1261,8 @@ export class SessionManager {
     expiresInSec: number = 0,
     attachment?: EncryptedAttachmentDescriptor
   ): Promise<ChatMessage> {
+    const group = this.groups.get(groupId);
+    if (!group) throw new Error(`Unknown group ${groupId}`);
     const groupSession = this.getOrCreateGroupSession(groupId);
 
     const payloadText = (attachment || expiresInSec > 0)
@@ -1189,9 +1276,8 @@ export class SessionManager {
 
     // ...fanned out as individual SEALED envelopes so the relay learns neither
     // the sender nor the group membership (privacy over the O(1) broadcast).
-    const members = await this.groupMemberList(groupId);
     const meLower = this.username.toLowerCase();
-    for (const member of members) {
+    for (const member of group.members) {
       if (member.toLowerCase() === meLower) continue;
       try {
         const { identity, signing } = await this.peerKeys(member);
@@ -1230,48 +1316,31 @@ export class SessionManager {
   }
 
   /**
-   * Remove a member from a group: drop them server-side, forget their sender
-   * chain, rotate our own sender key, and re-distribute it to the members who
-   * remain. After this the removed member cannot read any further messages.
+   * Remove a member from a group: forget their sender chain, rotate our own
+   * sender key, update the local roster, and re-invite the remaining members
+   * with the fresh key + updated definition. The removed member is told nothing
+   * and cannot read any further messages.
    */
-  async removeGroupMember(
-    groupId: string,
-    memberToRemove: string,
-    remainingMembers: string[]
-  ): Promise<void> {
-    try {
-      await fetch(`${this.serverUrl}/api/groups/${encodeURIComponent(groupId)}/members`, {
-        method: 'DELETE',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ member: memberToRemove, requester: this.username }),
-      });
-    } catch (err) {
-      console.warn('[Aegis] Could not update group membership on relay:', err);
-    }
-    this.groupMembersCache.delete(groupId);
+  async removeGroupMember(groupId: string, memberToRemove: string): Promise<void> {
+    const group = this.groups.get(groupId);
+    if (!group) throw new Error(`Unknown group ${groupId}`);
+
+    group.members = group.members.filter(
+      (m) => m.toLowerCase() !== memberToRemove.toLowerCase()
+    );
+    this.persistGroups();
 
     const gs = this.getOrCreateGroupSession(groupId);
     gs.removePeer(memberToRemove);
     gs.rotateOurSenderKey();
 
-    const staying = remainingMembers.filter(
-      (m) => m.toLowerCase() !== memberToRemove.toLowerCase()
-    );
-    await this.distributeSenderKeyToGroup(groupId, staying);
+    await this.sendGroupInvites(group, group.members);
   }
 
-  async distributeSenderKeyToGroup(groupId: string, members: string[]): Promise<void> {
-    const groupSession = this.getOrCreateGroupSession(groupId);
-    const distribution = groupSession.exportOurDistribution();
-    const payload = JSON.stringify({ _aegisGroupDistribution: true, distribution });
-
-    for (const member of members) {
-      if (member.toLowerCase() === this.username.toLowerCase()) continue;
-      try {
-        await this.sendMessage(member, payload, 0);
-      } catch (err) {
-        console.warn(`Failed to distribute sender key to ${member}:`, err);
-      }
-    }
+  /** Re-share our current sender key (and group definition) with the members. */
+  async distributeSenderKeyToGroup(groupId: string, members?: string[]): Promise<void> {
+    const group = this.groups.get(groupId);
+    if (!group) throw new Error(`Unknown group ${groupId}`);
+    await this.sendGroupInvites(group, members ?? group.members);
   }
 }

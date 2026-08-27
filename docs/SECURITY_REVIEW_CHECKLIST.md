@@ -83,6 +83,16 @@ your job is to confirm it actually does, under adversarial conditions.
 
 ## B. Groups (`senderKeys.ts`, group paths in `sessionManager.ts`)
 
+- [ ] Groups are **client-side only** — `createGroup` never touches the relay;
+      the definition + sender key go to each member as a sealed 1:1
+      `_aegisGroupInvite`. Confirm the relay has no group state and `test:e2e`
+      #10's audit assertion holds.
+- [ ] `_aegisGroupInvite` inbound handling: the group definition is accepted
+      from the sealed sender only after the outer signature verifies; **updates**
+      are accepted only when `envelope.sender === existing.creator`. Can a member
+      (not the creator) push a malicious roster/name update? Can the creator add
+      an attacker and receive copies (yes — is that acceptable? the creator is
+      trusted by group members by definition)?
 - [ ] Sender-key distribution travels over the 1:1 sealed channel — so it is
       only as authenticated as that session. Confirm.
 - [ ] `decrypt`: signature verified before any chain mutation; `MAX_SENDER_SKIP`
@@ -91,12 +101,13 @@ your job is to confirm it actually does, under adversarial conditions.
       A removed member holding the old chain cannot derive forward. Can they
       still **replay** a pre-rotation message they captured? (Yes at the
       sender-key layer — is `markSeen` the only thing stopping it?)
-- [ ] `sendGroupMessage`: fans out one sealed envelope per member. Member list
-      comes from `/api/groups/:id` (30s cache) — a compromised relay can add a
-      member to the roster and receive a copy. Is that in the threat model?
-      (It is: A1 + group creation is not blind.)
-- [ ] Group message `id` is `grp_msg_<uuid>:<member>` — distinct per recipient,
-      so `markSeen` doesn't false-positive. Confirm.
+- [ ] `removeGroupMember`: updates the local roster, rotates, re-invites the
+      remaining members. The removed member is told nothing. In-flight messages
+      during rotation — lost, or delivered under the old key?
+- [ ] `sendGroupMessage`: member list from the local `groups` map; fans out one
+      sealed envelope per member. Group message `id` is `grp_msg_<uuid>:<member>`
+      — distinct per recipient, so `markSeen` doesn't false-positive. Confirm.
+- [ ] `aegis_groups_<user>` blob goes through `secureStore` (encrypted at rest).
 
 ---
 
@@ -131,16 +142,19 @@ your job is to confirm it actually does, under adversarial conditions.
 - [ ] `routeSealedEnvelope`: routes only by `recipientBlindToken`; audit entry
       contains no sender/recipient. `activeSealedClients` / `offlineSealedQueues`
       keyed by token; both bounded (`MAX_QUEUE_PER_RECIPIENT`).
-- [ ] `AUTH` carries `username` **and** `blindToken` — username is still used for
-      group routing (legacy `GROUP_ENVELOPE`, now unused) and `/api/users`.
-      Should the username be removed from `AUTH` entirely?
+- [ ] `AUTH` carries `username` **and** `blindToken` — username is now only used
+      for `/api/users` and the inert legacy `GROUP_ENVELOPE`/`ENVELOPE` paths.
+      Should it be removed from `AUTH` entirely so a passive relay can't map
+      connection ↔ username?
+- [ ] `/api/groups/*` endpoints and `relay.createGroup`/`getGroup`/… were
+      **removed** (groups are client-side). Confirm nothing reachable recreates
+      server-side group state; `routeGroupEnvelope` is inert (empty `groups`).
 - [ ] Unauthenticated endpoints: `/api/audit`, `/api/users`,
-      `/api/keys/register` (overwrites!), `/api/groups/create`,
-      `DELETE /api/groups/:id/members` (creator-name check only, spoofable).
-      Rate limiting: none. DoS surface.
+      `/api/keys/register` (**overwrites** any existing bundle!). Rate limiting:
+      none. DoS surface.
 - [ ] Resource caps: `offlineQueues`, `offlineSealedQueues`, `attachments`
-      (+ TTL sweep), `groups`, `auditLogs` — every one bounded? `express.json`
-      256 KB, upload 25 MB, WS `maxPayload` 2 MB.
+      (+ TTL sweep), `auditLogs` — every one bounded? `express.json` 256 KB,
+      upload 25 MB, WS `maxPayload` 2 MB.
 - [ ] `KeyDirectory.getKeyBundle` pops a one-time prekey per fetch — an attacker
       can drain a victim's OPK pool with repeated GETs. Impact?
 - [ ] `acknowledgeDelivery` only logs — it does **not** remove from the offline

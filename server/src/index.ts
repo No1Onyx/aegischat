@@ -1,4 +1,3 @@
-import { randomUUID } from 'crypto';
 import express from 'express';
 import cors from 'cors';
 import { createServer } from 'http';
@@ -107,57 +106,10 @@ app.get('/api/attachments/:id', (req, res) => {
   return res.send(att.data);
 });
 
-// Create a secret group
-app.post('/api/groups/create', (req, res) => {
-  const { id, name, creator, members } = req.body;
-  if (!name || !creator || !Array.isArray(members)) {
-    return res.status(400).json({ error: 'Missing required group parameters' });
-  }
-  if (members.length > 512) {
-    return res.status(400).json({ error: 'Group too large' });
-  }
-
-  const groupId = typeof id === 'string' && id ? id : 'grp_' + randomUUID();
-  try {
-    const metadata = relay.createGroup(groupId, name, creator, members);
-    return res.json(metadata);
-  } catch (err) {
-    return res.status(503).json({ error: (err as Error).message });
-  }
-});
-
-// List groups for a user
-app.get('/api/groups/user/:username', (req, res) => {
-  const { username } = req.params;
-  const groups = relay.getGroupsForUser(username);
-  return res.json({ groups });
-});
-
-// Remove a member from a group (only the creator may do this).
-app.delete('/api/groups/:id/members', (req, res) => {
-  const { id } = req.params;
-  const { member, requester } = req.body || {};
-  if (!member || !requester) {
-    return res.status(400).json({ error: 'member and requester are required' });
-  }
-  const group = relay.getGroup(id);
-  if (!group) return res.status(404).json({ error: 'Group not found' });
-  if (group.creator.toLowerCase() !== String(requester).toLowerCase()) {
-    return res.status(403).json({ error: 'Only the group creator can remove members' });
-  }
-  const updated = relay.removeGroupMember(id, member);
-  return res.json(updated);
-});
-
-// Get specific group info
-app.get('/api/groups/:id', (req, res) => {
-  const { id } = req.params;
-  const group = relay.getGroup(id);
-  if (!group) {
-    return res.status(404).json({ error: 'Group not found' });
-  }
-  return res.json(group);
-});
+// NOTE: Groups are now entirely client-side. The relay is never told a group
+// exists, who is in it, or its name — the definition and sender keys travel to
+// each member as sealed 1:1 invites. The old /api/groups/* endpoints have been
+// removed; group messages ride the normal SEALED_ENVELOPE path.
 
 // Create HTTP and WebSocket servers
 const server = createServer(app);

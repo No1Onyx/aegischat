@@ -236,25 +236,13 @@ export function App() {
     getOrCreateSessionManager('Charlie').registerOnRelay().catch(() => {});
   }, []);
 
-  // Fetch groups for current user
-  const fetchUserGroups = async () => {
-    try {
-      const res = await fetch(`${SERVER_URL}/api/groups/user/${encodeURIComponent(currentUser)}`);
-      if (res.ok) {
-        const { groups: userGroups } = await res.json();
-        setGroups(userGroups || []);
-        if (userGroups && userGroups.length > 0 && !activeGroup) {
-          setActiveGroup(userGroups[0]);
-        }
-      }
-    } catch (err) {
-      console.error('Failed to fetch user groups:', err);
-    }
-  };
-
+  // Groups are entirely client-side; read them from the session manager.
   useEffect(() => {
-    fetchUserGroups();
-  }, [currentUser]);
+    if (isLocked || !secureStore.isUnlocked()) return;
+    const sm = smRef.current;
+    if (!sm) return;
+    setGroups(sm.getGroups());
+  }, [currentUser, isLocked]);
 
   // Ticker for auto-lock & disappearing messages
   useEffect(() => {
@@ -307,6 +295,9 @@ export function App() {
       smRef.current = sm;
       // Enforce out-of-band safety-number verification before the first message.
       sm.requireVerificationBeforeSend = true;
+      // Client-side groups: hydrate now and refresh on any invite/rekey.
+      setGroups(sm.getGroups());
+      sm.setOnGroupUpdate((gs) => { if (active) setGroups(gs); });
       // Reflect persisted pin state in the UI badges.
       setVerifiedContacts(() => {
         const s = new Set<string>();
@@ -435,29 +426,23 @@ export function App() {
       return;
     }
     try {
-      await smRef.current.removeGroupMember(activeGroup.id, member, activeGroup.members);
-      const updated: GroupMetadata = {
-        ...activeGroup,
-        members: activeGroup.members.filter(
-          (m) => m.toLowerCase() !== member.toLowerCase()
-        ),
-      };
-      setActiveGroup(updated);
-      setGroups((prev) => prev.map((g) => (g.id === updated.id ? updated : g)));
+      await smRef.current.removeGroupMember(activeGroup.id, member);
+      const updated = smRef.current.getGroup(activeGroup.id);
+      if (updated) setActiveGroup(updated);
+      setGroups(smRef.current.getGroups());
     } catch (err) {
       alert('Could not remove member: ' + (err as Error).message);
     }
   };
 
-  // Handle group created
-  const handleGroupCreated = async (newGroup: GroupMetadata) => {
-    setGroups((prev) => [...prev, newGroup]);
-    setActiveGroup(newGroup);
+  // Group creation happens entirely client-side (no relay registration).
+  const handleCreateGroup = async (name: string, members: string[]): Promise<GroupMetadata> => {
+    if (!smRef.current) throw new Error('Not connected');
+    const group = await smRef.current.createGroup(name, members);
+    setGroups(smRef.current.getGroups());
+    setActiveGroup(group);
     setActiveTab('groups');
-
-    if (smRef.current) {
-      await smRef.current.distributeSenderKeyToGroup(newGroup.id, newGroup.members);
-    }
+    return group;
   };
 
   // Send regular text message
@@ -775,7 +760,7 @@ export function App() {
       if (
         m.text?.startsWith('{"_aegisReaction":true,') ||
         m.text?.startsWith('{"_aegisPin":true,') ||
-        m.text?.startsWith('{"_aegisGroupDistribution":true,')
+        m.text?.startsWith('{"_aegisGroupInvite":true,')
       ) {
         return false;
       }
@@ -1601,7 +1586,7 @@ export function App() {
           currentUser={currentUser}
           availableContacts={contacts}
           onClose={() => setShowCreateGroupModal(false)}
-          onGroupCreated={handleGroupCreated}
+          onCreateGroup={handleCreateGroup}
         />
       )}
 

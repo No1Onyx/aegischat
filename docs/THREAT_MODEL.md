@@ -60,7 +60,7 @@ dependencies / compromised build pipeline; the browser or OS itself.
 | A1, A2 | Cannot forge or undetectably tamper with a message. | AEAD tag; ratchet header bound as AAD; sealed-sender inner payload Ed25519-signed. |
 | A1, A2 | **Forward secrecy** — a key compromised today does not open past messages. | Double Ratchet symmetric + DH ratchet; fresh message key per message. |
 | A1, A2 | **Post-compromise security** — after a compromise, security self-heals once both sides ratchet. | DH ratchet step rotates the root key each turn. |
-| A1 | Does not learn **who sent** a 1:1 or group message, nor **group membership** while routing. | Sealed sender: outer envelope carries only a blind delivery token; group messages fan out as per-recipient sealed envelopes. |
+| A1 | Does not learn **who sent** a 1:1 or group message, nor that a **group exists** at all. | Sealed sender: outer envelope carries only a blind delivery token. Groups are entirely client-side — no server registration; the definition and sender keys reach members as sealed 1:1 invites, and group messages fan out as per-recipient sealed envelopes. |
 | A1, A2 | Cannot **replay** an old message into a session. | Per-session seen-id set (persisted) + signed-timestamp window; ratchet commits state only after the AEAD tag verifies. |
 | A1, A3 | Cannot cause **unbounded work** with a crafted header. | `MAX_SKIP` bound on ratchet + sender-key catch-up; server collections all bounded. |
 | A3 | A single malformed/forged packet cannot **permanently desync** a session. | Decrypt derives against locals; `self` mutated only after verification. |
@@ -73,10 +73,6 @@ dependencies / compromised build pipeline; the browser or OS itself.
 
 ## 5. Non-guarantees (known and accepted, this version)
 
-- **Group *creation*** currently registers the roster with the relay over REST
-  (`POST /api/groups/create`). Message *routing* is blind, but the relay learns
-  the member list at group-setup time. A blind group-setup handshake is designed
-  but not implemented.
 - **Traffic analysis.** Message size is bucketed (256-byte padding) but timing,
   frequency, online/offline transitions, and total volume are observable to
   A1/A2. `dummyKeepAliveTraffic` is a config flag with no implementation.

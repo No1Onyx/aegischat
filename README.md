@@ -20,7 +20,7 @@ the web.
 | **Confidential 1:1 messages** | X3DH session setup → Double Ratchet. ChaCha20-Poly1305 AEAD. Keys never leave the client. |
 | **Forward secrecy + post-compromise security** | Per-message symmetric ratchet; per-turn DH ratchet rotating the root key. |
 | **Group messages** | Signal-style Sender Keys (Ed25519-signed), re-keyed when a member is removed. |
-| **The relay doesn't see who talks to whom** | Sealed sender: the outer envelope carries only a blind delivery token; group messages fan out as per-recipient sealed envelopes. |
+| **The relay doesn't see who talks to whom — or that a group exists** | Sealed sender (outer envelope = blind delivery token only). Groups are client-side: no server registration; definitions + sender keys reach members as sealed 1:1 invites. |
 | **Identity you can verify** | 12-word BIP-39 seed → deterministic identity keys (restore on any device). Trust-on-first-use pinning; the app requires an out-of-band 60-digit safety-number check before the first message and hard-fails if a contact's key later changes. |
 | **Encrypted at rest** | Every key/seed/session/message blob in local storage is ChaCha20-Poly1305-encrypted under an Argon2id-derived key (64 MiB, t=3, p=4) that lives only in RAM and is dropped on lock. |
 | **Duress phrase** | A decoy passphrase (stored only as a hash) triggers an emergency shred. |
@@ -28,7 +28,6 @@ the web.
 
 ## What it does **not** do (yet)
 
-- Group **creation** still tells the relay the member list (message routing is blind; setup isn't).
 - Tor / SOCKS5 / domain-fronting are not enforceable from a web page — they need Tor Browser, a system proxy, or the native build. A relay-URL override and a fronting header are provided.
 - Traffic-analysis resistance is limited to 256-byte size bucketing. Timing/volume/online-status are visible to the relay.
 - WebRTC calls leak your IP to STUN (and, without a TURN server, to the peer). `relay-only` mode exists but needs your own TURN server.
