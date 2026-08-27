@@ -1,9 +1,31 @@
 use ed25519_dalek::{SigningKey, VerifyingKey, Signer, Verifier, Signature};
+use x25519_dalek::{StaticSecret, PublicKey as X25519PublicKey};
 use serde::{Serialize, Deserialize};
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
 
 use crate::aead::{encrypt_aead, decrypt_aead, SymmetricKey};
 use crate::double_ratchet::EncryptedWireMessage;
+use crate::kdf::kdf_single;
+
+/// Info string for the sealed-sender transport key. MUST match the TS client
+/// (client/src/crypto/primitives.ts SEALED_SENDER_INFO).
+const SEALED_SENDER_INFO: &[u8] = b"AegisChat_SealedSender_v1";
+
+/// Derives the sealed-sender transport key exactly as the TS client does:
+///   shared       = X25519(eph_secret, recipient_identity_public)
+///   transportKey = HKDF-SHA256(ikm = shared, salt = 0*32, info = SEALED_SENDER_INFO, 32)
+///
+/// NOTE: this is the interop-critical key agreement. The TS client additionally
+/// wraps the plaintext in its 256-byte padding scheme before AEAD; full wire
+/// parity with that outer framing is intentionally left until the Rust core is
+/// put on the live path.
+pub fn sealed_transport_key(
+    our_secret: &StaticSecret,
+    their_identity_public: &X25519PublicKey,
+) -> SymmetricKey {
+    let shared = our_secret.diffie_hellman(their_identity_public);
+    SymmetricKey::from_bytes(kdf_single(shared.as_bytes(), &[0u8; 32], SEALED_SENDER_INFO))
+}
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct SealedSenderInnerPayload {
@@ -115,4 +137,27 @@ pub fn unseal_message(
         .map_err(|_| "CRYPTOGRAPHIC VERIFICATION FAILED: Sender signature invalid!")?;
 
     Ok(inner)
+}
+
+#[cfg(test)]
+mod sealed_transport_key_tests {
+    use super::*;
+
+    #[test]
+    fn transport_key_matches_ts_client_vector() {
+        // eph secret = [1;32], recipient identity secret = [2;32]
+        let eph = StaticSecret::from([1u8; 32]);
+        let recip_secret = StaticSecret::from([2u8; 32]);
+        let recip_public = X25519PublicKey::from(&recip_secret);
+
+        assert_eq!(
+            hex::encode(recip_public.as_bytes()),
+            "ce8d3ad1ccb633ec7b70c17814a5c76ecd029685050d344745ba05870e587d59"
+        );
+        let tk = sealed_transport_key(&eph, &recip_public);
+        assert_eq!(
+            hex::encode(tk.key),
+            "930afda5b97686e9455b17e7c070ba3c6a1c68f34bd38c00f37322accd016729"
+        );
+    }
 }

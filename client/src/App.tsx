@@ -154,6 +154,7 @@ export function App() {
 
   // Live Cryptographic State
   const [ratchetSummary, setRatchetSummary] = useState<RatchetStateSummary | null>(null);
+  const [showGroupMembers, setShowGroupMembers] = useState<boolean>(false);
 
   // WebRTC End-to-End Encrypted Calling
   const [callState, setCallState] = useState<CallState>('idle');
@@ -418,6 +419,34 @@ export function App() {
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, activeTab, activeContact, activeGroup]);
+
+  const isGroupCreator =
+    !!activeGroup && activeGroup.creator.toLowerCase() === currentUser.toLowerCase();
+
+  const handleRemoveGroupMember = async (member: string) => {
+    if (!activeGroup || !smRef.current) return;
+    if (
+      !confirm(
+        `Remove ${member} from "${activeGroup.name}"? Your sender key will rotate so ` +
+        `they cannot read any further messages.`
+      )
+    ) {
+      return;
+    }
+    try {
+      await smRef.current.removeGroupMember(activeGroup.id, member, activeGroup.members);
+      const updated: GroupMetadata = {
+        ...activeGroup,
+        members: activeGroup.members.filter(
+          (m) => m.toLowerCase() !== member.toLowerCase()
+        ),
+      };
+      setActiveGroup(updated);
+      setGroups((prev) => prev.map((g) => (g.id === updated.id ? updated : g)));
+    } catch (err) {
+      alert('Could not remove member: ' + (err as Error).message);
+    }
+  };
 
   // Handle group created
   const handleGroupCreated = async (newGroup: GroupMetadata) => {
@@ -1188,13 +1217,63 @@ export function App() {
                 </button>
               </>
             ) : (
-              <span className="text-xs bg-indigo-950 text-indigo-300 px-3 py-1.5 rounded-xl border border-indigo-800/50 font-mono flex items-center gap-1.5">
-                <Lock className="w-3.5 h-3.5 text-indigo-400" />
-                <span>Sender Keys</span>
-              </span>
+              <>
+                <span className="text-xs bg-indigo-950 text-indigo-300 px-3 py-1.5 rounded-xl border border-indigo-800/50 font-mono flex items-center gap-1.5">
+                  <Lock className="w-3.5 h-3.5 text-indigo-400" />
+                  <span>Sender Keys</span>
+                </span>
+                <button
+                  onClick={() => setShowGroupMembers((v) => !v)}
+                  className={`px-3 py-1.5 rounded-xl border text-xs font-semibold flex items-center gap-1.5 transition-all ${
+                    showGroupMembers
+                      ? 'bg-sky-600 border-sky-500 text-white'
+                      : 'bg-slate-900/60 border-slate-800 text-slate-300 hover:text-white'
+                  }`}
+                  title="Group members"
+                >
+                  <Users className="w-3.5 h-3.5" />
+                  <span>Members</span>
+                </button>
+              </>
             )}
           </div>
         </div>
+
+        {/* Group members panel */}
+        {activeTab === 'groups' && showGroupMembers && activeGroup && (
+          <div className="px-6 py-3 border-b border-slate-800 bg-slate-900/60">
+            <div className="text-[11px] uppercase tracking-wide text-slate-400 mb-2">
+              Members ({activeGroup.members.length})
+              {isGroupCreator && (
+                <span className="ml-2 text-slate-500 normal-case tracking-normal">
+                  · removing a member rotates your sender key
+                </span>
+              )}
+            </div>
+            <div className="flex flex-wrap gap-2">
+              {activeGroup.members.map((m) => (
+                <span
+                  key={m}
+                  className="flex items-center gap-1.5 text-xs bg-slate-800 border border-slate-700 rounded-lg px-2 py-1 text-slate-200"
+                >
+                  <span>{m}</span>
+                  {m.toLowerCase() === activeGroup.creator.toLowerCase() && (
+                    <span className="text-[9px] text-amber-400">creator</span>
+                  )}
+                  {isGroupCreator && m.toLowerCase() !== currentUser.toLowerCase() && (
+                    <button
+                      onClick={() => handleRemoveGroupMember(m)}
+                      className="text-rose-400 hover:text-rose-300 font-bold leading-none"
+                      title={`Remove ${m}`}
+                    >
+                      ×
+                    </button>
+                  )}
+                </span>
+              ))}
+            </div>
+          </div>
+        )}
 
         {/* In-Chat Search Drawer */}
         {showSearchBar && (
