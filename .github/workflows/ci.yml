@@ -1,0 +1,65 @@
+name: CI
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+
+jobs:
+  rust:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: core-crypto
+      - name: cargo test
+        run: cargo test --manifest-path ./core-crypto/Cargo.toml --locked
+      - name: cargo build (warnings are errors)
+        run: RUSTFLAGS="-D warnings" cargo build --manifest-path ./core-crypto/Cargo.toml --locked
+
+  node:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install deps
+        run: |
+          npm ci
+          npm --prefix client ci
+          npm --prefix server ci
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Build client
+        run: npm --prefix client run build
+      - name: Unit tests (rust + crypto vectors + security regressions)
+        run: npm run test:crypto && npm run test:security
+      - name: Start relay
+        run: |
+          npm --prefix server run dev &
+          for i in $(seq 1 30); do
+            curl -sf http://localhost:4000/api/status && break
+            sleep 1
+          done
+      - name: Live integration tests
+        run: npm run test:live
+
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: npm audit (client)
+        run: npm --prefix client audit --audit-level=high || true
+      - name: npm audit (server)
+        run: npm --prefix server audit --audit-level=high || true
+      - uses: dtolnay/rust-toolchain@stable
+      - name: cargo audit
+        run: |
+          cargo install cargo-audit --locked
+          cargo audit --file core-crypto/Cargo.lock || true
