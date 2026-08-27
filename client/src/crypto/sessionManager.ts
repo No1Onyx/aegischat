@@ -133,6 +133,62 @@ export class SessionManager {
   // headless test harnesses work); the UI turns it on.
   public requireVerificationBeforeSend = false;
 
+  // --- Replay defence ------------------------------------------------------
+  // A hostile relay can re-deliver old envelopes. We drop any envelope id we
+  // have already processed, and reject envelopes whose signed timestamp is
+  // outside a sane window.
+  private seenIds = new Set<string>();
+  private seenOrder: string[] = [];
+  private seenDirty = 0;
+  private static MAX_SEEN = 5000;
+  private static MAX_CLOCK_SKEW_MS = 24 * 60 * 60 * 1000;      // 1 day in the future
+  private static MAX_MESSAGE_AGE_MS = 7 * 24 * 60 * 60 * 1000; // 7 days in the past
+
+  private seenKey() {
+    return `aegis_seen_${this.username.toLowerCase()}`;
+  }
+
+  private loadSeen() {
+    try {
+      const raw = secureStore.getItem(this.seenKey());
+      if (!raw) return;
+      const arr = JSON.parse(raw) as string[];
+      for (const id of arr) {
+        this.seenIds.add(id);
+        this.seenOrder.push(id);
+      }
+    } catch {
+      /* ignore */
+    }
+  }
+
+  private persistSeen() {
+    secureStore.setItem(this.seenKey(), JSON.stringify(this.seenOrder));
+  }
+
+  /** Returns false if this id was already processed (caller must drop it). */
+  private markSeen(id: string): boolean {
+    if (!id || this.seenIds.has(id)) return false;
+    this.seenIds.add(id);
+    this.seenOrder.push(id);
+    if (this.seenOrder.length > SessionManager.MAX_SEEN) {
+      const evicted = this.seenOrder.shift();
+      if (evicted) this.seenIds.delete(evicted);
+    }
+    if (++this.seenDirty >= 16) {
+      this.seenDirty = 0;
+      this.persistSeen();
+    }
+    return true;
+  }
+
+  private timestampInWindow(ts: number | undefined): boolean {
+    if (typeof ts !== 'number' || !Number.isFinite(ts)) return true; // absent => skip check
+    const now = Date.now();
+    return ts <= now + SessionManager.MAX_CLOCK_SKEW_MS &&
+           ts >= now - SessionManager.MAX_MESSAGE_AGE_MS;
+  }
+
   getOrCreateGroupSession(groupId: string): GroupSessionManager {
     if (!this.groupSessions.has(groupId)) {
       const gs = new GroupSessionManager(groupId, this.username);
@@ -178,6 +234,7 @@ export class SessionManager {
     this.loadOrCreateVault();
     this.loadSessions();
     this.loadPins();
+    this.loadSeen();
   }
 
   // --- Trust / pinning -----------------------------------------------------
@@ -548,6 +605,7 @@ export class SessionManager {
   }
 
   disconnect() {
+    this.persistSeen();
     if (this.ws) {
       const ws = this.ws;
       this.ws = null;
@@ -756,6 +814,16 @@ export class SessionManager {
       return;
     }
 
+    // Replay defence: reject stale timestamps and anything we've already seen.
+    if (!this.timestampInWindow(inner.timestamp)) {
+      console.warn('[Aegis] Dropped sealed envelope with out-of-window timestamp.');
+      return;
+    }
+    if (!this.markSeen(sealed.id)) {
+      console.warn('[Aegis] Dropped replayed sealed envelope', sealed.id);
+      return;
+    }
+
     // Trust-on-first-use on BOTH keys now that sealed sender gives us the
     // signing key too.
     try {
@@ -951,6 +1019,14 @@ export class SessionManager {
 
   private handleIncomingGroupEnvelope(envelope: any) {
     try {
+      if (!this.timestampInWindow(envelope.timestamp)) {
+        console.warn('[Aegis] Dropped group envelope with out-of-window timestamp.');
+        return;
+      }
+      if (!this.markSeen(envelope.id)) {
+        console.warn('[Aegis] Dropped replayed group envelope', envelope.id);
+        return;
+      }
       const groupSession = this.getOrCreateGroupSession(envelope.groupId);
       const plaintext = groupSession.decrypt(envelope.sender, {
         messageIndex: envelope.messageIndex,
