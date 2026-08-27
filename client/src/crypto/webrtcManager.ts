@@ -17,13 +17,71 @@ export type CallState =
   | 'connected'
   | 'ended';
 
-const RTC_CONFIG: RTCConfiguration = {
-  iceServers: [
-    { urls: 'stun:stun.l.google.com:19302' },
-    { urls: 'stun:stun1.l.google.com:19302' },
-    { urls: 'stun:stun.cloudflare.com:3478' },
-  ],
+export type CallPrivacyMode =
+  | 'standard'    // STUN for NAT traversal, direct P2P where possible
+  | 'relay-only'  // force TURN relay so the peer never learns your IP (needs TURN)
+  | 'no-stun';    // no STUN/TURN at all — only works on the same LAN / mesh
+
+export interface CallPrivacyConfig {
+  mode: CallPrivacyMode;
+  stunServers: string[];
+  turnServers: { urls: string; username?: string; credential?: string }[];
+}
+
+const CALL_CONFIG_KEY = 'aegis_call_config';
+
+const DEFAULT_CALL_CONFIG: CallPrivacyConfig = {
+  mode: 'standard',
+  // Cloudflare first (privacy-friendlier than Google); users can trim this list.
+  stunServers: ['stun:stun.cloudflare.com:3478', 'stun:stun.l.google.com:19302'],
+  turnServers: [],
 };
+
+export function getCallPrivacyConfig(): CallPrivacyConfig {
+  try {
+    const raw = localStorage.getItem(CALL_CONFIG_KEY);
+    if (raw) return { ...DEFAULT_CALL_CONFIG, ...JSON.parse(raw) };
+  } catch {
+    /* ignore */
+  }
+  return { ...DEFAULT_CALL_CONFIG };
+}
+
+export function setCallPrivacyConfig(cfg: Partial<CallPrivacyConfig>): CallPrivacyConfig {
+  const merged = { ...getCallPrivacyConfig(), ...cfg };
+  try {
+    localStorage.setItem(CALL_CONFIG_KEY, JSON.stringify(merged));
+  } catch {
+    /* ignore */
+  }
+  return merged;
+}
+
+function buildRtcConfig(): RTCConfiguration {
+  const cfg = getCallPrivacyConfig();
+  const iceServers: RTCIceServer[] = [];
+
+  if (cfg.mode !== 'no-stun') {
+    for (const s of cfg.stunServers) iceServers.push({ urls: s });
+  }
+  for (const t of cfg.turnServers) {
+    iceServers.push({ urls: t.urls, username: t.username, credential: t.credential });
+  }
+
+  const rtc: RTCConfiguration = { iceServers };
+  if (cfg.mode === 'relay-only') {
+    // Never emit host/srflx candidates: the remote peer only ever sees the TURN
+    // relay address, not the caller's real IP. Requires at least one TURN server.
+    rtc.iceTransportPolicy = 'relay';
+    if (cfg.turnServers.length === 0) {
+      console.warn(
+        '[Aegis] Call privacy is "relay-only" but no TURN server is configured — ' +
+        'calls will not connect until you add one.'
+      );
+    }
+  }
+  return rtc;
+}
 
 export class WebRTCManager {
   private pc: RTCPeerConnection | null = null;
@@ -126,7 +184,7 @@ export class WebRTCManager {
   }
 
   private createPeerConnection() {
-    this.pc = new RTCPeerConnection(RTC_CONFIG);
+    this.pc = new RTCPeerConnection(buildRtcConfig());
 
     if (this.localStream) {
       this.localStream.getTracks().forEach((track) => {

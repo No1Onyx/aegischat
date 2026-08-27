@@ -34,6 +34,7 @@ import { generateSafetyNumber } from './safetyNumber.js';
 import type { EncryptedAttachmentDescriptor } from './attachments.js';
 import { GroupSessionManager } from './senderKeys.js';
 import type { CallSignal } from './webrtcManager.js';
+import { TransportManager } from './transport.js';
 
 export interface WireEnvelope {
   id: string;
@@ -164,7 +165,8 @@ export class SessionManager {
     identityMnemonic?: string
   ) {
     this.username = username;
-    this.serverUrl = serverUrl;
+    // Honour a censorship-circumvention relay override (mirror / hidden service).
+    this.serverUrl = TransportManager.effectiveBaseUrl(serverUrl);
     // Real onboarded users pass their seed phrase; demo profiles get a
     // deterministic per-username phrase so identity is always reproducible.
     this.identityMnemonic =
