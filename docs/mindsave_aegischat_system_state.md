@@ -1,7 +1,10 @@
 # AegisChat — System State Snapshot (Mindsave)
 
-**Date:** 2026-09-17 · **Branch:** `main` · **HEAD:** `763df9e` · 13 commits,
+**Date:** 2026-09-17 · **Branch:** `main` · **HEAD:** `59661be` · 15 commits,
 clean tree, pushed to `https://github.com/No1Onyx/aegischat` (private).
+**CI is green** (first fully-passing run: `rust` + `audit` + `node` all pass).
+`gh` CLI is installed and authenticated locally — `git push`/`gh run watch`
+etc. work without manual token handling.
 
 This file is the resumable brain-dump: where the project is, what's proven, what
 isn't, and what a human still has to do. For the intended guarantees and their
@@ -59,6 +62,8 @@ happened.
 | `b7d37f8` | **Blind groups**: no server-side group registration at all. `createGroup` is local; definition + sender key travel as sealed 1:1 `_aegisGroupInvite`. Removed all `/api/groups/*` endpoints. |
 | `057ef88` | Mindsave snapshot (2026-08-31). |
 | `763df9e` | **First real manual QA pass found 4 live bugs, all fixed**: (1) `getSafetyNumber()` returned null before a session existed, deadlocking the mandatory-verification flow — a brand-new contact could never be verified because the modal had nothing to show. Fixed with a pinned-identity fallback. (2) Non-creator group members never broadcast their own Sender Key back to the group, so only the creator's messages were ever decryptable by anyone else. Fixed with a one-shot reciprocation on invite receipt. (3) `App.tsx` eagerly registered demo identities for *all* seeded contacts from *every* browser tab; last-write-wins on the relay meant one tab's registration could silently clobber another user's real key bundle, and could permanently shadow your own real seed-phrase identity with a throwaway one generated pre-onboarding. Fixed by removing cross-user pre-registration and gating session setup on onboarding actually completing. (4) `requireVerificationBeforeSend` only fired when *initiating* a session; replying to an inbound first message skipped verification entirely (session already existed from receiving). Fixed by checking verification on both paths, before any session state is persisted. |
+| `6fcb4f2` | `SECURITY.md` PGP fingerprint filled in + public key committed as `SECURITY.pgp.asc`. |
+| `59661be` | **First CI run(s) failed** (`npm ci` — root `package-lock.json` was out of sync with `package.json`, unrelated to anything above, just never caught before this was actually pushed). Regenerated the lock file; CI is now green. |
 
 ---
 
@@ -110,19 +115,30 @@ fuzz targets.
    path — that's exactly where all 4 bugs were.
 2. ~~**Push** the repo; enable the CI + fuzz workflows.~~ — **Done 2026-09-17.**
    Pushed to `https://github.com/No1Onyx/aegischat` (private), branch renamed
-   `master` → `main`. First CI run should have fired automatically on push —
-   **check `https://github.com/No1Onyx/aegischat/actions`**, this is CI's
-   first-ever run and could surface an environment difference from local.
-   Nightly fuzz workflow won't fire until the cron schedule ticks over.
-3. Fill placeholders: `SECURITY.md` PGP fingerprint; `deploy/Caddyfile` hostname
-   + email; prod client build `VITE_RELAY_URL=…` and widen Tauri `connect-src`.
-4. **Run the fuzzers** (Linux / nightly): `cd core-crypto && cargo +nightly fuzz
+   `master` → `main`. First two CI runs failed on a stale root
+   `package-lock.json` (fixed in `59661be`) — **CI is green now.** Nightly
+   fuzz workflow hasn't fired yet (cron-scheduled, not push-triggered) —
+   worth checking back on after it's had a night to run.
+3. Placeholders: ~~`SECURITY.md` PGP fingerprint~~ **done** (`6fcb4f2`,
+   fingerprint `7F2B 0720 992C 4F15 1B76 EB34 358D A78E C2B7 8227`, public key
+   `SECURITY.pgp.asc`). **Still open** (no deployment target exists yet):
+   `deploy/Caddyfile` hostname + email; prod client build `VITE_RELAY_URL=…`
+   and widen Tauri `connect-src`.
+   Also: the PGP revocation certificate was generated at key-creation time and
+   copied to `~/Desktop/AegisChat-PGP-revocation-cert-KEEP-OFFLINE.asc` —
+   **confirm it's been moved to real offline storage** (it's not committed to
+   the repo on purpose, since anyone holding it could revoke the key).
+4. `npm --prefix server audit` reports 3 moderate-severity vulnerabilities
+   (CI's audit job doesn't fail on these — `--audit-level=high` + `|| true` —
+   so this doesn't block anything, but the "0 vulns" framing above is now
+   stale until someone looks at what they are).
+5. **Run the fuzzers** (Linux / nightly): `cd core-crypto && cargo +nightly fuzz
    run <target> -- -max_total_time=600` for each of the 5 targets.
-5. **Independent review** — `SECURITY_REVIEW_CHECKLIST.md` is the map. Firm
+6. **Independent review** — `SECURITY_REVIEW_CHECKLIST.md` is the map. Firm
    (Cure53 / Trail of Bits / ROS) or free (open-source + cryptography community +
    cold multi-model review + small bug bounty). Do **not** put it in front of
    at-risk users before this.
-6. Decide the Rust core's fate — wire `core-crypto/` onto the live path (real
+7. Decide the Rust core's fate — wire `core-crypto/` onto the live path (real
    RAM-zeroization + disk wipe) or formally mark it reference-only.
 
 ---
