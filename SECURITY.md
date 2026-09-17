@@ -14,7 +14,9 @@ protect and, importantly, what it does **not**.
 
 Please report privately. Do **not** open a public issue for a security bug.
 
-- Email: `mku95.at@gmail.com` (PGP key: _TODO — add fingerprint_)
+- Email: `mku95.at@gmail.com` (PGP key fingerprint:
+  `7F2B 0720 992C 4F15 1B76  EB34 358D A78E C2B7 8227`,
+  public key: [`SECURITY.pgp.asc`](SECURITY.pgp.asc))
 - Expect an acknowledgement within 7 days.
 - Please include: affected component, version/commit, a description of the
   impact, and steps or a proof-of-concept to reproduce.

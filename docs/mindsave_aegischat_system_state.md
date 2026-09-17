@@ -1,7 +1,7 @@
 # AegisChat — System State Snapshot (Mindsave)
 
-**Date:** 2026-08-31 · **Branch:** `master` · **HEAD:** `b7d37f8` · 11 commits,
-clean tree, not pushed.
+**Date:** 2026-09-17 · **Branch:** `main` · **HEAD:** `763df9e` · 13 commits,
+clean tree, pushed to `https://github.com/No1Onyx/aegischat` (private).
 
 This file is the resumable brain-dump: where the project is, what's proven, what
 isn't, and what a human still has to do. For the intended guarantees and their
@@ -21,8 +21,12 @@ that a group exists), trust-on-first-use identity pinning with forced
 safety-number verification, seed-phrase-derived identity keys, and Argon2id-keyed
 encryption of everything at rest. The shipping crypto is TypeScript
 (`client/src/crypto/`); the Rust `core-crypto/` engine is reference code + locked
-interop vectors and is **not on the live path**. ~80 automated checks pass; no
-independent security review has happened.
+interop vectors and is **not on the live path**. ~80 automated checks pass, and
+as of `763df9e` the full onboarding → lock → 1:1 → group → removal → duress →
+reload flow has been manually QA'd end-to-end (via an automated Playwright
+harness driving two separate browser identities against the real relay) —
+4 real bugs found in that pass are fixed. No independent security review has
+happened.
 
 ---
 
@@ -53,6 +57,8 @@ independent security review has happened.
 | `c4e49e9` | **Fuzzing**: `core-crypto/fuzz/` (5 cargo-fuzz targets) + `tests/adversarial.rs` (stable, in CI) + nightly `fuzz.yml`. |
 | `823bf05` | `SECURITY.md`, `THREAT_MODEL.md`, `SECURITY_REVIEW_CHECKLIST.md`, `DEPLOYMENT.md` + `deploy/` (compose/Dockerfile/Caddyfile); README rewritten; "uncrackable" removed from UI + docs. |
 | `b7d37f8` | **Blind groups**: no server-side group registration at all. `createGroup` is local; definition + sender key travel as sealed 1:1 `_aegisGroupInvite`. Removed all `/api/groups/*` endpoints. |
+| `057ef88` | Mindsave snapshot (2026-08-31). |
+| `763df9e` | **First real manual QA pass found 4 live bugs, all fixed**: (1) `getSafetyNumber()` returned null before a session existed, deadlocking the mandatory-verification flow — a brand-new contact could never be verified because the modal had nothing to show. Fixed with a pinned-identity fallback. (2) Non-creator group members never broadcast their own Sender Key back to the group, so only the creator's messages were ever decryptable by anyone else. Fixed with a one-shot reciprocation on invite receipt. (3) `App.tsx` eagerly registered demo identities for *all* seeded contacts from *every* browser tab; last-write-wins on the relay meant one tab's registration could silently clobber another user's real key bundle, and could permanently shadow your own real seed-phrase identity with a throwaway one generated pre-onboarding. Fixed by removing cross-user pre-registration and gating session setup on onboarding actually completing. (4) `requireVerificationBeforeSend` only fired when *initiating* a session; replying to an inbound first message skipped verification entirely (session already existed from receiving). Fixed by checking verification on both paths, before any session state is persisted. |
 
 ---
 
@@ -95,13 +101,19 @@ fuzz targets.
 
 ## 5. Human to-do (nothing here can be done by the model alone)
 
-1. **Manual browser QA** — `npm run dev` (kill the stale relay on :4000 first),
-   `localStorage.clear()` once, then: onboard → lock → unlock → verify safety
-   number → 1:1 in two tabs (`?user=Alice` / `?user=Bob`) → create group → send →
-   Members panel → remove a member → duress phrase → **reload** and confirm
-   history/sessions/groups return. The App lock/unlock/group wiring is the
-   least-tested code.
-2. **Push** the repo; enable the CI + fuzz workflows.
+1. ~~**Manual browser QA**~~ — **Done 2026-09-17.** Full flow (onboard → lock →
+   unlock → verify safety number → 1:1 both directions → create group → send →
+   Members panel → remove a member → duress phrase → reload) exercised via an
+   automated two-identity Playwright harness against the real relay. 4 real
+   bugs found and fixed (see `763df9e` above). Re-run it if you touch
+   `sessionManager.ts`, `App.tsx`'s session-init effects, or the group invite
+   path — that's exactly where all 4 bugs were.
+2. ~~**Push** the repo; enable the CI + fuzz workflows.~~ — **Done 2026-09-17.**
+   Pushed to `https://github.com/No1Onyx/aegischat` (private), branch renamed
+   `master` → `main`. First CI run should have fired automatically on push —
+   **check `https://github.com/No1Onyx/aegischat/actions`**, this is CI's
+   first-ever run and could surface an environment difference from local.
+   Nightly fuzz workflow won't fire until the cron schedule ticks over.
 3. Fill placeholders: `SECURITY.md` PGP fingerprint; `deploy/Caddyfile` hostname
    + email; prod client build `VITE_RELAY_URL=…` and widen Tauri `connect-src`.
 4. **Run the fuzzers** (Linux / nightly): `cd core-crypto && cargo +nightly fuzz
