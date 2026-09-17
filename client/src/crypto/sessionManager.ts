@@ -232,6 +232,10 @@ export class SessionManager {
   // Client-side group registry (never sent to the relay).
   private groups = new Map<string, LocalGroup>();
 
+  // Groups whose members we've already broadcast our own Sender Key
+  // distribution to. Guards the invite-reciprocation below against looping.
+  private announcedToGroup = new Set<string>();
+
   public setOnCallSignal(cb: (peer: string, signal: CallSignal) => void) {
     this.onCallSignalCallback = cb;
   }
@@ -766,13 +770,17 @@ export class SessionManager {
 
       // Trust-on-first-use: pin identity now, or fail hard if it changed.
       this.checkAndPinIdentity(recipient, rawBundle.identityPublicKey, rawBundle.signingPublicKey);
+
+      // Check verification before doing any X3DH/session work: a blocked
+      // attempt must not create a local session that was never actually
+      // transmitted, or a later retry would skip X3DH (thinking a session
+      // already exists) and send a message the recipient can't bootstrap.
       if (
         this.requireVerificationBeforeSend &&
         this.getPeerTrustState(recipient) !== 'verified'
       ) {
         throw new Error(
-          `VERIFICATION_REQUIRED: confirm ${recipient}'s safety number before the ` +
-          `first message.`
+          `VERIFICATION_REQUIRED: confirm ${recipient}'s safety number before sending.`
         );
       }
 
@@ -812,6 +820,17 @@ export class SessionManager {
       };
       this.sessions.set(recipient, sessionData);
       this.persistSessions();
+    } else if (
+      this.requireVerificationBeforeSend &&
+      this.getPeerTrustState(recipient) !== 'verified'
+    ) {
+      // Session already exists -- e.g. we received a first message from
+      // this peer and are now replying. Still enforce verification before
+      // any ciphertext goes out, the same as the brand-new-session path
+      // above.
+      throw new Error(
+        `VERIFICATION_REQUIRED: confirm ${recipient}'s safety number before sending.`
+      );
     }
 
     // Make sure we know the recipient's signing key (for their blind token).
@@ -1085,6 +1104,24 @@ export class SessionManager {
           }
           this.getOrCreateGroupSession(dist.groupId).importPeerDistribution(dist);
           console.log(`[Aegis] Joined/updated group ${g.id} via invite from ${envelope.sender}`);
+
+          // Reciprocate: a member's Sender Key only reaches anyone else if we
+          // proactively send it — importing the inviter's key above doesn't
+          // do that for ours. Announce it back once per group so the group
+          // works both ways; `announcedToGroup` stops this from looping when
+          // the other side's own reciprocation arrives back at us.
+          if (!this.announcedToGroup.has(g.id)) {
+            const stored = this.groups.get(g.id);
+            const membersToTell = (stored?.members ?? []).filter(
+              (m) => m.toLowerCase() !== this.username.toLowerCase()
+            );
+            if (stored && membersToTell.length > 0) {
+              this.sendGroupInvites(stored, membersToTell).catch((err) => {
+                console.warn(`[Aegis] Could not announce our sender key for ${g.id}:`, err);
+              });
+            }
+          }
+
           this.ws?.send(JSON.stringify({
             type: 'ACK', envelopeId: envelope.id, blindToken: this.myBlindToken(),
           }));
@@ -1145,13 +1182,22 @@ export class SessionManager {
    * Safety Number (Fingerprint) calculation for peer
    */
   getSafetyNumber(peer: string): { formatted: string[]; rawHash: string } | null {
-    const sessionData = this.sessions.get(peer.toLowerCase());
-    if (!sessionData) return null;
+    const key = peer.toLowerCase();
+    const sessionData = this.sessions.get(key);
+    if (sessionData) {
+      return generateSafetyNumber(
+        this.identityKeyPair.publicKey,
+        sessionData.peerIdentityPublicKey
+      );
+    }
 
-    return generateSafetyNumber(
-      this.identityKeyPair.publicKey,
-      sessionData.peerIdentityPublicKey
-    );
+    // No Double Ratchet session yet (e.g. blocked by VERIFICATION_REQUIRED before
+    // the first message goes out) — fall back to the pinned identity key so the
+    // safety number is still computable before that first message can succeed.
+    const pin = this.pins.get(key);
+    if (!pin) return null;
+
+    return generateSafetyNumber(this.identityKeyPair.publicKey, fromBase64(pin.identityKey));
   }
 
   getRatchetSummary(peer: string): RatchetStateSummary | null {
@@ -1242,6 +1288,7 @@ export class SessionManager {
 
   /** Send `{ _aegisGroupInvite }` (definition + our current sender key) to members. */
   private async sendGroupInvites(group: LocalGroup, to: string[]): Promise<void> {
+    this.announcedToGroup.add(group.id);
     const gs = this.getOrCreateGroupSession(group.id);
     const distribution = gs.exportOurDistribution();
     const payload = JSON.stringify({ _aegisGroupInvite: true, group, distribution });

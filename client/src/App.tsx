@@ -229,13 +229,6 @@ export function App() {
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
   const messageRefs = useRef<Map<string, HTMLDivElement>>(new Map());
 
-  // Pre-register demo users
-  useEffect(() => {
-    getOrCreateSessionManager('Alice').registerOnRelay().catch(() => {});
-    getOrCreateSessionManager('Bob').registerOnRelay().catch(() => {});
-    getOrCreateSessionManager('Charlie').registerOnRelay().catch(() => {});
-  }, []);
-
   // Groups are entirely client-side; read them from the session manager.
   useEffect(() => {
     if (isLocked || !secureStore.isUnlocked()) return;
@@ -276,10 +269,13 @@ export function App() {
   useEffect(() => {
     let active = true;
 
-    // Don't spin up the crypto session engine until the encrypted-at-rest store
-    // is open (i.e. the vault is unlocked), or we'd derive keys with no access
-    // to the persisted seed phrase / sessions.
-    if (hasConfig && (isLocked || !secureStore.isUnlocked())) {
+    // Don't spin up the crypto session engine until onboarding has actually
+    // produced a real seed-phrase identity and the encrypted-at-rest store is
+    // open. Doing this any earlier would cache a throwaway demo identity for
+    // this username (getOrCreateSessionManager caches by username and never
+    // replaces it), permanently shadowing the real seed-derived identity for
+    // the rest of the page's lifetime.
+    if (!hasConfig || isLocked || !secureStore.isUnlocked()) {
       return;
     }
 
